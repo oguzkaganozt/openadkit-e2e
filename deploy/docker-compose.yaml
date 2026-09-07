@@ -1,0 +1,113 @@
+# VP plans → adapter → SI follows → CARLA.
+# SI posix binary is host-side (see run-si.sh). VP steering_cmd is not wired to CARLA.
+#
+#   docker compose --env-file config.env up
+#   ./run-si.sh
+
+services:
+  carla:
+    image: ${CARLA_IMAGE:-carlasim/carla:0.9.16}
+    container_name: openadkit-e2e-carla
+    network_mode: host
+    init: true
+    ipc: host
+    runtime: nvidia
+    environment:
+      - DISPLAY=${DISPLAY}
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+    command: >
+      bash CarlaUE4.sh -nosound
+      -carla-rpc-port=2000
+      --ros2
+    restart: on-failure
+
+  adapter:
+    image: ${AUTOWARE_IMAGE:-ghcr.io/autowarefoundation/autoware:universe-20250207}
+    container_name: openadkit-e2e-adapter
+    network_mode: host
+    ipc: host
+    env_file:
+      - config.env
+    volumes:
+      - ../adapter:/opt/adapter:ro
+      - ./cyclonedds.xml:/autoware/cyclonedds.xml:ro
+    working_dir: /opt/adapter
+    command: >
+      bash -lc "source /opt/ros/$${ROS_DISTRO}/setup.bash &&
+      source /opt/autoware/setup.bash &&
+      python3 /opt/adapter/path_to_trajectory.py"
+    restart: on-failure
+
+  operation-mode:
+    image: ${AUTOWARE_IMAGE:-ghcr.io/autowarefoundation/autoware:universe-20250207}
+    container_name: openadkit-e2e-operation-mode
+    network_mode: host
+    ipc: host
+    env_file:
+      - config.env
+    volumes:
+      - ./nodes:/opt/nodes:ro
+      - ./cyclonedds.xml:/autoware/cyclonedds.xml:ro
+    command: >
+      bash -lc "source /opt/ros/$${ROS_DISTRO}/setup.bash &&
+      source /opt/autoware/setup.bash &&
+      python3 /opt/nodes/operation_mode.py"
+    restart: on-failure
+
+  plant:
+    image: ${AUTOWARE_IMAGE:-ghcr.io/autowarefoundation/autoware:universe-20250207}
+    container_name: openadkit-e2e-plant
+    network_mode: host
+    ipc: host
+    env_file:
+      - config.env
+    volumes:
+      - ./nodes:/opt/nodes:ro
+      - ./cyclonedds.xml:/autoware/cyclonedds.xml:ro
+    command: >
+      bash -lc "source /opt/ros/$${ROS_DISTRO}/setup.bash &&
+      source /opt/autoware/setup.bash &&
+      python3 /opt/nodes/plant_bridge.py"
+    depends_on:
+      - carla
+    restart: on-failure
+
+  domain-bridge:
+    build:
+      context: ../upstream/autoware-safety-island/demo/bridge
+      args:
+        ROS_DISTRO: humble
+    container_name: openadkit-e2e-bridge
+    network_mode: host
+    ipc: host
+    env_file:
+      - config.env
+    volumes:
+      - ./cyclonedds.xml:/autoware/cyclonedds.xml:ro
+      - ./bridge-config.yaml:/autoware/bridge-config.yaml:ro
+    restart: on-failure
+
+  visionpilot:
+    profiles: ["vp"]
+    image: ${VISIONPILOT_IMAGE:-visionpilot:gpu}
+    container_name: openadkit-e2e-visionpilot
+    network_mode: host
+    ipc: host
+    runtime: nvidia
+    environment:
+      - DISPLAY=${DISPLAY}
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+      - ROS_DOMAIN_ID=1
+      - CYCLONEDDS_URI=file:///autoware/cyclonedds.xml
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ./cyclonedds.xml:/autoware/cyclonedds.xml:ro
+      - ./vision_pilot.carla.conf:/usr/share/visionpilot/config/vision_pilot_ros2.conf:ro
+    depends_on:
+      - carla
+    restart: on-failure

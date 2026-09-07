@@ -1,0 +1,9 @@
+[submodule "upstream/vision_pilot"]
+	path = upstream/vision_pilot
+	url = https://github.com/autowarefoundation/vision_pilot.git
+[submodule "upstream/openadkit"]
+	path = upstream/openadkit
+	url = https://github.com/autowarefoundation/openadkit.git
+[submodule "upstream/autoware-safety-island"]
+	path = upstream/autoware-safety-island
+	url = https://github.com/autowarefoundation/autoware-safety-island.git
