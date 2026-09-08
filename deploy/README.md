@@ -13,6 +13,9 @@ CARLA (no --ros2)
 VP `steering_cmd` is not connected to CARLA.
 
 ```bash
+# 0. fresh GPU host: build/download all pinned runtime artifacts
+./deploy/bootstrap.sh --dds-interface ens3
+
 # 1. adapter tests
 python3 -m unittest discover -s adapter -v
 
@@ -27,7 +30,13 @@ docker compose --env-file config.env up
 docker compose --env-file config.env --profile vp up
 ```
 
-Plant talks to CARLA over the Python API (RPC :2000). Do not pass `--ros2` to CARLA — native control is broken on 0.9.16. Copy the matching `carla-0.9.16-cp310` wheel to `/tmp/` before `compose up`. `run-loop.sh` keeps exactly one SI process alive. SI posix needs `--dds-interface` on a multicast-capable NIC.
+`bootstrap.sh` requires Git, curl, Docker Compose, an NVIDIA driver, and the
+Docker NVIDIA runtime. It verifies the official CARLA 0.9.16 CPython 3.10 wheel,
+builds `visionpilot:gpu-ros2`, builds the Safety Island in its pinned devcontainer,
+pulls the runtime images, and builds the domain bridge. Pass `--run` to start the
+loop after a successful bootstrap.
+
+Plant talks to CARLA over the Python API (RPC :2000). Do not pass `--ros2` to CARLA — native control is broken on 0.9.16. The bootstrap stages the matching CARLA wheel in `/tmp/`. `run-loop.sh` keeps exactly one SI process alive. SI posix needs `--dds-interface` on a multicast-capable NIC.
 
 The spawn client advances CARLA synchronously at a requested 20 Hz, while the 1920x1280 rig camera runs at 10 Hz. The adapter publishes a fixed 3 m/s target. Plant maps SI velocity/acceleration to CARLA throttle with a cruise feedforward plus speed error term. The rig camera preview is available from the plant on port 8090.
 
