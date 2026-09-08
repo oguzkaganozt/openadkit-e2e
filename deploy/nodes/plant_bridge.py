@@ -25,6 +25,28 @@ def _quat_from_yaw(yaw: float):
     return (0.0, 0.0, math.sin(yaw * 0.5), math.cos(yaw * 0.5))
 
 
+STOP_SPEED_MPS = 0.05
+CRUISE_THROTTLE_PER_MPS = 0.12
+SPEED_P_GAIN = 0.15
+ACCEL_THROTTLE_GAIN = 0.08
+BRAKE_DECEL_GAIN = 0.25
+MAX_THROTTLE = 0.5
+
+
+def carla_longitudinal(cmd_v: float, cmd_a: float, actual_v: float) -> tuple[float, float]:
+    if cmd_v <= STOP_SPEED_MPS and cmd_a <= 0.0:
+        return 0.0, 0.4
+    speed_error = cmd_v - actual_v
+    if speed_error < -0.4 or (cmd_a < 0.0 and speed_error < 0.0):
+        return 0.0, min(1.0, max(-cmd_a * BRAKE_DECEL_GAIN, -speed_error * 0.5))
+    throttle = (
+        CRUISE_THROTTLE_PER_MPS * max(cmd_v, 0.0)
+        + SPEED_P_GAIN * speed_error
+        + ACCEL_THROTTLE_GAIN * max(cmd_a, 0.0)
+    )
+    return max(0.0, min(MAX_THROTTLE, throttle)), 0.0
+
+
 _jpeg = None
 _jpeg_lock = threading.Lock()
 
@@ -80,13 +102,19 @@ class PlantBridge(Node):
         self._camera_role = self.get_parameter("camera_role").value
 
         self._client = carla.Client(host, port)
-        self._client.set_timeout(5.0)
+        self._client.set_timeout(2.0)
         self._world = None
         self._vehicle = None
         self._camera = None
         self._last_steer = 0.0
         self._control_count = 0
         self._http_server = None
+        self._lock = threading.Lock()
+        self._stop = False
+        self._pending_ctrl = None
+        self._sample = None
+        self._actual_v = 0.0
+        self._max_steer = None
 
         img_qos = QoSProfile(
             depth=1,
@@ -112,6 +140,7 @@ class PlantBridge(Node):
         )
         self.create_timer(0.05, self._on_timer)
         threading.Thread(target=self._http, daemon=True).start()
+        threading.Thread(target=self._carla_loop, daemon=True).start()
         self.get_logger().info("plant_bridge: CARLA RPC %s:%s http://0.0.0.0:8090/" % (host, port))
 
     def _connect(self):
@@ -174,63 +203,101 @@ class PlantBridge(Node):
                 self.get_logger().warn("camera listen failed: %s" % exc)
 
     def _on_timer(self):
-        if not self._connect():
+        with self._lock:
+            sample = self._sample
+            last_steer = self._last_steer
+        if sample is None:
             return
-        self._find_actors()
-        vehicle = self._vehicle
-        if vehicle is None or not vehicle.is_alive:
-            return
-        try:
-            t = vehicle.get_transform()
-            vel = vehicle.get_velocity()
-            acc = vehicle.get_acceleration()
-        except RuntimeError as exc:
-            # config_carla destroys the old hero before spawning the next one.
-            self._vehicle = None
-            self._camera = None
-            self.get_logger().warn("hero became unavailable: %s" % exc)
-            return
-        yaw = -math.radians(t.rotation.yaw)
-        qx, qy, qz, qw = _quat_from_yaw(yaw)
+        qx, qy, qz, qw = _quat_from_yaw(sample["yaw"])
         stamp = self.get_clock().now().to_msg()
 
         odom = Odometry()
         odom.header.stamp = stamp
         odom.header.frame_id = "map"
         odom.child_frame_id = "base_link"
-        odom.pose.pose.position.x = float(t.location.x)
-        odom.pose.pose.position.y = float(-t.location.y)
-        odom.pose.pose.position.z = float(t.location.z)
+        odom.pose.pose.position.x = sample["x"]
+        odom.pose.pose.position.y = sample["y"]
+        odom.pose.pose.position.z = sample["z"]
         odom.pose.pose.orientation.x = qx
         odom.pose.pose.orientation.y = qy
         odom.pose.pose.orientation.z = qz
         odom.pose.pose.orientation.w = qw
-        cos_y = math.cos(yaw)
-        sin_y = math.sin(yaw)
-        vel_x = float(vel.x)
-        vel_y = float(-vel.y)
-        acc_x = float(acc.x)
-        acc_y = float(-acc.y)
-        odom.twist.twist.linear.x = cos_y * vel_x + sin_y * vel_y
-        odom.twist.twist.linear.y = -sin_y * vel_x + cos_y * vel_y
-        odom.twist.twist.linear.z = float(vel.z)
+        odom.twist.twist.linear.x = sample["vx"]
+        odom.twist.twist.linear.y = sample["vy"]
+        odom.twist.twist.linear.z = sample["vz"]
         self.odom_pub.publish(odom)
-
-        speed = math.hypot(vel.x, vel.y)
-        self.speed_pub.publish(Float64(data=float(speed)))
+        self.speed_pub.publish(Float64(data=sample["speed"]))
 
         accel = AccelWithCovarianceStamped()
         accel.header.stamp = stamp
         accel.header.frame_id = "base_link"
-        accel.accel.accel.linear.x = cos_y * acc_x + sin_y * acc_y
-        accel.accel.accel.linear.y = -sin_y * acc_x + cos_y * acc_y
-        accel.accel.accel.linear.z = float(acc.z)
+        accel.accel.accel.linear.x = sample["ax"]
+        accel.accel.accel.linear.y = sample["ay"]
+        accel.accel.accel.linear.z = sample["az"]
         self.accel_pub.publish(accel)
 
         steer = SteeringReport()
         steer.stamp = stamp
-        steer.steering_tire_angle = self._last_steer
+        steer.steering_tire_angle = last_steer
         self.steer_pub.publish(steer)
+
+    def _carla_loop(self):
+        while not self._stop:
+            try:
+                if not self._connect():
+                    time.sleep(0.2)
+                    continue
+                self._find_actors()
+                vehicle = self._vehicle
+                if vehicle is None or not vehicle.is_alive:
+                    time.sleep(0.1)
+                    continue
+                if self._max_steer is None:
+                    physics = vehicle.get_physics_control()
+                    max_steer = (
+                        math.radians(physics.wheels[0].max_steer_angle)
+                        if physics.wheels
+                        else 1.0
+                    )
+                    self._max_steer = max_steer if max_steer > 1e-6 else 1.0
+                with self._lock:
+                    ctrl = self._pending_ctrl
+                if ctrl is not None:
+                    vehicle.apply_control(ctrl)
+                t = vehicle.get_transform()
+                vel = vehicle.get_velocity()
+                acc = vehicle.get_acceleration()
+                yaw = -math.radians(t.rotation.yaw)
+                cos_y = math.cos(yaw)
+                sin_y = math.sin(yaw)
+                vel_x = float(vel.x)
+                vel_y = float(-vel.y)
+                acc_x = float(acc.x)
+                acc_y = float(-acc.y)
+                actual_v = cos_y * vel_x + sin_y * vel_y
+                sample = {
+                    "x": float(t.location.x),
+                    "y": float(-t.location.y),
+                    "z": float(t.location.z),
+                    "yaw": yaw,
+                    "yaw_deg": float(t.rotation.yaw),
+                    "vx": actual_v,
+                    "vy": -sin_y * vel_x + cos_y * vel_y,
+                    "vz": float(vel.z),
+                    "ax": cos_y * acc_x + sin_y * acc_y,
+                    "ay": -sin_y * acc_x + cos_y * acc_y,
+                    "az": float(acc.z),
+                    "speed": math.hypot(vel.x, vel.y),
+                }
+                with self._lock:
+                    self._sample = sample
+                    self._actual_v = actual_v
+            except RuntimeError as exc:
+                self._vehicle = None
+                self._camera = None
+                self._max_steer = None
+                self.get_logger().warn("hero became unavailable: %s" % exc)
+            time.sleep(0.05)
 
     def _on_camera(self, image):
         try:
@@ -262,58 +329,49 @@ class PlantBridge(Node):
         self._http_server.serve_forever()
 
     def _on_control(self, msg: Control):
-        if self._vehicle is None or not self._vehicle.is_alive:
+        self._last_steer = float(msg.lateral.steering_tire_angle)
+        with self._lock:
+            sample = self._sample
+            actual_v = self._actual_v
+            max_steer = self._max_steer or 1.0
+        if sample is None:
             return
-        try:
-            self._last_steer = float(msg.lateral.steering_tire_angle)
-            physics = self._vehicle.get_physics_control()
-            max_steer = (
-                math.radians(physics.wheels[0].max_steer_angle)
-                if physics.wheels
-                else 1.0
-            )
-            if max_steer <= 1e-6:
-                max_steer = 1.0
-            ctrl = carla.VehicleControl()
-            # Autoware uses positive-left; CARLA's normalized input is positive-right.
-            ctrl.steer = max(-1.0, min(1.0, -self._last_steer / max_steer))
-            acc = float(msg.longitudinal.acceleration)
-            vel = float(msg.longitudinal.velocity)
-            if vel <= 0.05 and acc <= 0.0:
-                ctrl.throttle = 0.0
-                ctrl.brake = 0.4
-            elif acc >= 0.0:
-                ctrl.throttle = min(1.0, acc / 3.0)
-                ctrl.brake = 0.0
-            else:
-                ctrl.throttle = 0.0
-                ctrl.brake = min(1.0, -acc / 4.0)
-            ctrl.hand_brake = False
-            ctrl.manual_gear_shift = False
-            self._vehicle.apply_control(ctrl)
-            self._control_count += 1
-            if self._control_count == 1 or self._control_count % 100 == 0:
-                transform = self._vehicle.get_transform()
-                self.get_logger().info(
-                    "applied control #%d: tire=%.3f carla=%.3f throttle=%.3f "
-                    "brake=%.3f pose=(%.2f, %.2f, %.1fdeg)"
-                    % (
-                        self._control_count,
-                        self._last_steer,
-                        ctrl.steer,
-                        ctrl.throttle,
-                        ctrl.brake,
-                        transform.location.x,
-                        transform.location.y,
-                        transform.rotation.yaw,
-                    )
+        ctrl = carla.VehicleControl()
+        # Autoware uses positive-left; CARLA's normalized input is positive-right.
+        ctrl.steer = max(-1.0, min(1.0, -self._last_steer / max_steer))
+        acc = float(msg.longitudinal.acceleration)
+        vel = float(msg.longitudinal.velocity)
+        ctrl.throttle, ctrl.brake = carla_longitudinal(vel, acc, actual_v)
+        ctrl.hand_brake = False
+        ctrl.manual_gear_shift = False
+        with self._lock:
+            self._pending_ctrl = ctrl
+        self._control_count += 1
+        if self._control_count == 1 or self._control_count % 100 == 0:
+            pose_x = sample["x"] if sample else 0.0
+            pose_y = -sample["y"] if sample else 0.0
+            pose_yaw = sample["yaw_deg"] if sample else 0.0
+            self.get_logger().info(
+                "applied control #%d: cmd_v=%.2f actual_v=%.2f cmd_a=%.2f "
+                "tire=%.3f carla=%.3f throttle=%.3f brake=%.3f "
+                "pose=(%.2f, %.2f, %.1fdeg)"
+                % (
+                    self._control_count,
+                    vel,
+                    actual_v,
+                    acc,
+                    self._last_steer,
+                    ctrl.steer,
+                    ctrl.throttle,
+                    ctrl.brake,
+                    pose_x,
+                    pose_y,
+                    pose_yaw,
                 )
-        except RuntimeError as exc:
-            self._vehicle = None
-            self._camera = None
-            self.get_logger().warn("control target became unavailable: %s" % exc)
+            )
 
     def destroy_node(self):
+        self._stop = True
         if self._http_server is not None:
             self._http_server.shutdown()
             self._http_server.server_close()
