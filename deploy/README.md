@@ -29,7 +29,7 @@ docker compose --env-file config.env --profile vp up
 
 Plant talks to CARLA over the Python API (RPC :2000). Do not pass `--ros2` to CARLA — native control is broken on 0.9.16. Copy the matching `carla-0.9.16-cp310` wheel to `/tmp/` before `compose up`. `run-loop.sh` keeps exactly one SI process alive. SI posix needs `--dds-interface` on a multicast-capable NIC.
 
-The spawn client advances CARLA synchronously at a requested 20 Hz, and the adapter publishes a fixed 3 m/s target. Plant maps SI velocity/acceleration to CARLA throttle with a cruise feedforward plus speed error term. The rig camera preview is available from the plant on port 8090.
+The spawn client advances CARLA synchronously at a requested 20 Hz, while the 1920x1280 rig camera runs at 10 Hz. The adapter publishes a fixed 3 m/s target. Plant maps SI velocity/acceleration to CARLA throttle with a cruise feedforward plus speed error term. The rig camera preview is available from the plant on port 8090.
 
 Build SI:
 

@@ -114,7 +114,7 @@ services:
       - ./vision_pilot.carla.conf:/usr/share/visionpilot/config/vision_pilot_ros2.conf:ro
     entrypoint: ["/bin/bash", "-lc"]
     command:
-      - source /opt/ros/jazzy/setup.bash && exec /usr/bin/VisionPilot
+      - source /opt/ros/jazzy/setup.bash && exec /usr/bin/VisionPilot --no-window
     restart: on-failure
 
   path-tx:

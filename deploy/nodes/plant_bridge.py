@@ -115,6 +115,9 @@ class PlantBridge(Node):
         self._sample = None
         self._actual_v = 0.0
         self._max_steer = None
+        self._preview_frame = None
+        self._camera_count = 0
+        self._camera_started = time.monotonic()
 
         img_qos = QoSProfile(
             depth=1,
@@ -140,6 +143,7 @@ class PlantBridge(Node):
         )
         self.create_timer(0.05, self._on_timer)
         threading.Thread(target=self._http, daemon=True).start()
+        threading.Thread(target=self._preview_loop, daemon=True).start()
         threading.Thread(target=self._carla_loop, daemon=True).start()
         self.get_logger().info("plant_bridge: CARLA RPC %s:%s http://0.0.0.0:8090/" % (host, port))
 
@@ -176,6 +180,7 @@ class PlantBridge(Node):
                 bp.set_attribute("image_size_x", "1920")
                 bp.set_attribute("image_size_y", "1280")
                 bp.set_attribute("fov", "50")
+                bp.set_attribute("sensor_tick", "0.1")
                 tf = carla.Transform(
                     carla.Location(x=1.544, y=0.0243, z=2.116),
                     carla.Rotation(pitch=-0.11, yaw=-0.23, roll=-0.1),
@@ -314,14 +319,37 @@ class PlantBridge(Node):
             msg.step = image.width * 3
             msg.data = bgr.tobytes()
             self.image_pub.publish(msg)
-            small = cv2.resize(bgr, (640, 427))
-            ok, buf = cv2.imencode(".jpg", small, [int(cv2.IMWRITE_JPEG_QUALITY), 45])
-            if ok:
-                with _jpeg_lock:
-                    global _jpeg
-                    _jpeg = buf.tobytes()
+            with self._lock:
+                self._preview_frame = bgr
+            self._camera_count += 1
+            if self._camera_count == 1 or self._camera_count % 50 == 0:
+                elapsed = time.monotonic() - self._camera_started
+                self.get_logger().info(
+                    "camera frame #%d (%.2f Hz)"
+                    % (self._camera_count, self._camera_count / elapsed)
+                )
         except Exception as exc:
             self.get_logger().error("camera: %s" % exc)
+
+    def _preview_loop(self):
+        global _jpeg
+        while not self._stop:
+            with self._lock:
+                frame = self._preview_frame
+                self._preview_frame = None
+            if frame is None:
+                time.sleep(0.02)
+                continue
+            try:
+                small = cv2.resize(frame, (640, 427))
+                ok, buf = cv2.imencode(
+                    ".jpg", small, [int(cv2.IMWRITE_JPEG_QUALITY), 45]
+                )
+                if ok:
+                    with _jpeg_lock:
+                        _jpeg = buf.tobytes()
+            except Exception as exc:
+                self.get_logger().error("preview: %s" % exc)
 
     def _http(self):
         self._http_server = ThreadingHTTPServer(("0.0.0.0", 8090), _MjpegHandler)
