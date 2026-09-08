@@ -5,6 +5,7 @@ import socket
 import rclpy
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Path
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 
@@ -19,6 +20,7 @@ class PathRelayRx(Node):
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._sock.bind((host, port))
         self._sock.setblocking(False)
+        self._count = 0
         qos = QoSProfile(
             depth=1,
             history=HistoryPolicy.KEEP_LAST,
@@ -55,6 +57,12 @@ class PathRelayRx(Node):
                 ps.pose.orientation.w = float(p["qw"])
                 msg.poses.append(ps)
             self.pub.publish(msg)
+            self._count += 1
+            if self._count == 1 or self._count % 100 == 0:
+                self.get_logger().info(
+                    "published relayed Path #%d (%d poses)"
+                    % (self._count, len(msg.poses))
+                )
 
 
 def main():
@@ -62,7 +70,7 @@ def main():
     node = PathRelayRx()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         node.destroy_node()

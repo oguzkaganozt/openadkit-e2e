@@ -20,8 +20,8 @@ services:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
     command: >
       bash CarlaUE4.sh -nosound
+      -RenderOffScreen
       -carla-rpc-port=2000
-      --ros2
     restart: on-failure
 
   adapter:
@@ -95,41 +95,37 @@ services:
 
   visionpilot:
     profiles: ["vp"]
-    image: ${VISIONPILOT_IMAGE:-visionpilot:gpu}
+    image: ${VISIONPILOT_IMAGE:-visionpilot:gpu-ros2}
     container_name: openadkit-e2e-visionpilot
     network_mode: host
     ipc: host
     runtime: nvidia
     environment:
       - DISPLAY=${DISPLAY}
+      - LIBGL_ALWAYS_SOFTWARE=1
+      - QT_X11_NO_MITSHM=1
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=all
-      - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
       - ROS_DOMAIN_ID=1
-      - CYCLONEDDS_URI=file:///autoware/cyclonedds.xml
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - ./cyclonedds.xml:/autoware/cyclonedds.xml:ro
       - ./vision_pilot.conf:/usr/share/visionpilot/config/vision_pilot.conf:ro
       - ./vision_pilot.carla.conf:/usr/share/visionpilot/config/vision_pilot_ros2.conf:ro
-    depends_on:
-      - carla
     entrypoint: ["/bin/bash", "-lc"]
     command:
       - source /opt/ros/jazzy/setup.bash && exec /usr/bin/VisionPilot
     restart: on-failure
 
   path-tx:
-    image: ${VISIONPILOT_IMAGE:-visionpilot:gpu}
+    profiles: ["vp"]
+    image: ${VISIONPILOT_IMAGE:-visionpilot:gpu-ros2}
     container_name: openadkit-e2e-path-tx
     network_mode: host
     ipc: host
     environment:
-      - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
       - ROS_DOMAIN_ID=1
-      - CYCLONEDDS_URI=file:///autoware/cyclonedds.xml
     volumes:
-      - ./cyclonedds.xml:/autoware/cyclonedds.xml:ro
       - ./nodes:/opt/nodes:ro
     entrypoint: ["/bin/bash", "-lc"]
     command:

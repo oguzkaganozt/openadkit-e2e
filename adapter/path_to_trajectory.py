@@ -17,7 +17,7 @@ from dataclasses import dataclass
 EXTENT_CAP_M = 25.0
 TARGET_POINT_COUNT = 13
 SERIALIZED_BYTE_BUDGET = 1200
-DEFAULT_SPEED_LIMIT_MPS = 11.0
+DEFAULT_TARGET_SPEED_MPS = 3.0
 DEFAULT_V_MIN_MPS = 1.0
 DEFAULT_FRAME_ID = "map"
 
@@ -98,11 +98,10 @@ def transform_to_odom(point: Pose2D, ego: Pose2D) -> Pose2D:
 
 
 def target_speed_mps(
-    ego_v: float,
-    speed_limit_mps: float = DEFAULT_SPEED_LIMIT_MPS,
+    target_mps: float = DEFAULT_TARGET_SPEED_MPS,
     v_min_mps: float = DEFAULT_V_MIN_MPS,
 ) -> float:
-    return min(speed_limit_mps, max(ego_v, v_min_mps))
+    return max(v_min_mps, target_mps)
 
 
 def _align_up(offset: int, alignment: int) -> int:
@@ -197,9 +196,8 @@ def downsample_indices(
 def convert(
     path_points: list[Pose2D],
     ego: Pose2D,
-    ego_v: float,
     *,
-    speed_limit_mps: float = DEFAULT_SPEED_LIMIT_MPS,
+    target_velocity_mps: float = DEFAULT_TARGET_SPEED_MPS,
     v_min_mps: float = DEFAULT_V_MIN_MPS,
     frame_id: str = DEFAULT_FRAME_ID,
     extent_cap_m: float = EXTENT_CAP_M,
@@ -220,11 +218,23 @@ def convert(
     )
     if not indices:
         return None
+    if indices[0] != 0:
+        indices = [0] + [i for i in indices if i != 0]
+        budget = min(
+            target_point_count, max_points_within(len(frame_id), byte_budget)
+        )
+        indices = indices[:budget]
     if serialized_size_bytes(len(frame_id), len(indices)) > byte_budget:
         return None
 
-    speed = target_speed_mps(ego_v, speed_limit_mps, v_min_mps)
+    speed = target_speed_mps(target_velocity_mps, v_min_mps)
     selected = [world[i] for i in indices]
+    if math.hypot(selected[0].x - ego.x, selected[0].y - ego.y) > 0.5:
+        selected = [ego] + selected
+        budget = min(
+            target_point_count, max_points_within(len(frame_id), byte_budget)
+        )
+        selected = selected[:budget]
     lengths = cumulative_arc_lengths([(p.x, p.y) for p in selected])
     return [
         TrajectoryPoint(
@@ -244,6 +254,7 @@ def main(args=None) -> None:
     from builtin_interfaces.msg import Duration
     from geometry_msgs.msg import Pose
     from nav_msgs.msg import Odometry, Path
+    from rclpy.executors import ExternalShutdownException
     from rclpy.qos import (
         QoSDurabilityPolicy,
         QoSHistoryPolicy,
@@ -261,8 +272,8 @@ def main(args=None) -> None:
         "input_odom_topic", DEFAULT_INPUT_ODOM_TOPIC
     ).value
     output_topic = node.declare_parameter("output_topic", DEFAULT_OUTPUT_TOPIC).value
-    speed_limit = node.declare_parameter(
-        "speed_limit_mps", DEFAULT_SPEED_LIMIT_MPS
+    target_speed = node.declare_parameter(
+        "target_speed_mps", DEFAULT_TARGET_SPEED_MPS
     ).value
     v_min = node.declare_parameter("v_min_mps", DEFAULT_V_MIN_MPS).value
     out_frame = node.declare_parameter("frame_id", DEFAULT_FRAME_ID).value
@@ -282,7 +293,7 @@ def main(args=None) -> None:
     )
     publisher = node.create_publisher(Trajectory, output_topic, qos)
     latest_ego: list[Pose2D | None] = [None]
-    latest_speed: list[float] = [0.0]
+    published_count = [0]
 
     def on_odom(msg: Odometry) -> None:
         q = msg.pose.pose.orientation
@@ -291,10 +302,6 @@ def main(args=None) -> None:
             msg.pose.pose.position.y,
             yaw_from_quaternion(q.x, q.y, q.z, q.w),
         )
-        latest_speed[0] = math.hypot(
-            msg.twist.twist.linear.x, msg.twist.twist.linear.y
-        )
-
     def on_path(msg: Path) -> None:
         ego = latest_ego[0]
         if ego is None:
@@ -312,8 +319,7 @@ def main(args=None) -> None:
         points = convert(
             path_points,
             ego,
-            latest_speed[0],
-            speed_limit_mps=speed_limit,
+            target_velocity_mps=target_speed,
             v_min_mps=v_min,
             frame_id=out_frame,
             extent_cap_m=extent_cap,
@@ -342,6 +348,15 @@ def main(args=None) -> None:
             tp.time_from_start = Duration(sec=sec, nanosec=nsec)
             out.points.append(tp)
         publisher.publish(out)
+        published_count[0] += 1
+        if published_count[0] == 1 or published_count[0] % 100 == 0:
+            first = out.points[0].pose.position
+            last = out.points[-1].pose.position
+            node.get_logger().info(
+                f"published Trajectory #{published_count[0]} ({len(out.points)} points, "
+                f"first=({first.x:.2f}, {first.y:.2f}), "
+                f"last=({last.x:.2f}, {last.y:.2f}))"
+            )
 
     node.create_subscription(Odometry, input_odom, on_odom, qos)
     node.create_subscription(Path, input_path, on_path, qos)
@@ -351,7 +366,7 @@ def main(args=None) -> None:
     )
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         node.destroy_node()

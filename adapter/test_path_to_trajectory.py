@@ -56,12 +56,12 @@ class QuadraticPathTests(unittest.TestCase):
 
 class ConvertTests(unittest.TestCase):
     def test_empty_path_is_none(self):
-        self.assertIsNone(convert([], Pose2D(0.0, 0.0, 0.0), ego_v=5.0))
+        self.assertIsNone(convert([], Pose2D(0.0, 0.0, 0.0)))
 
     def test_straight_path_in_map(self):
         path = sample_quadratic_path(0.0, 0.0, 0.0, x_max_m=40.0)
         ego = Pose2D(100.0, 200.0, 0.0)
-        out = convert(path, ego, ego_v=8.0)
+        out = convert(path, ego, target_velocity_mps=3.0)
         self.assertIsNotNone(out)
         assert out is not None
         self.assertLessEqual(len(out), TARGET_POINT_COUNT)
@@ -70,13 +70,13 @@ class ConvertTests(unittest.TestCase):
         self.assertGreater(out[-1].x, out[0].x)
         self.assertLessEqual(out[-1].x - out[0].x, EXTENT_CAP_M + 1.0)
         for p in out:
-            self.assertAlmostEqual(p.longitudinal_velocity_mps, 8.0)
+            self.assertAlmostEqual(p.longitudinal_velocity_mps, 3.0)
         self.assertAlmostEqual(out[0].time_from_start_sec, 0.0)
         self.assertGreater(out[-1].time_from_start_sec, 0.0)
 
     def test_fits_si_byte_budget(self):
         path = sample_quadratic_path(0.0, 0.0, 0.0, x_max_m=60.0)
-        out = convert(path, Pose2D(0.0, 0.0, 0.0), ego_v=10.0)
+        out = convert(path, Pose2D(0.0, 0.0, 0.0))
         self.assertIsNotNone(out)
         assert out is not None
         size = serialized_size_bytes(len(DEFAULT_FRAME_ID), len(out))
@@ -85,13 +85,21 @@ class ConvertTests(unittest.TestCase):
 
     def test_stopped_ego_still_gets_min_speed(self):
         path = sample_quadratic_path(0.0, 0.0, 0.0, x_max_m=10.0)
-        out = convert(path, Pose2D(0.0, 0.0, 0.0), ego_v=0.0)
+        out = convert(path, Pose2D(0.0, 0.0, 0.0), target_velocity_mps=0.0)
         self.assertIsNotNone(out)
         assert out is not None
         self.assertAlmostEqual(out[0].longitudinal_velocity_mps, DEFAULT_V_MIN_MPS)
 
-    def test_speed_capped_at_limit(self):
-        self.assertAlmostEqual(target_speed_mps(20.0, speed_limit_mps=11.0), 11.0)
+    def test_distant_path_starts_at_ego(self):
+        path = [Pose2D(5.0, 0.0, 0.0), Pose2D(10.0, 0.0, 0.0)]
+        ego = Pose2D(1.0, 2.0, 0.0)
+        out = convert(path, ego)
+        self.assertIsNotNone(out)
+        assert out is not None
+        self.assertEqual((out[0].x, out[0].y), (ego.x, ego.y))
+
+    def test_configured_target_speed(self):
+        self.assertAlmostEqual(target_speed_mps(3.0), 3.0)
 
     def test_yaw_roundtrip(self):
         for yaw in (0.0, 0.3, -1.2, math.pi / 2.0):

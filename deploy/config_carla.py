@@ -2,11 +2,9 @@
 """Spawn the VisionPilot ego + sensors in CARLA and follow it with the spectator.
 
 Pure CARLA PythonAPI — no ROS. Needs only the `carla` wheel matching this python
-(drive.sh stages it from $CARLA_ROOT). Ego telemetry (speed, max_steer) is published
-as ROS 2 topics by the `ego_telemetry` node inside the bridge container, so ROS never
-crosses the host/container boundary (host<->container DDS delivery proved unreliable).
+(drive.sh stages it from $CARLA_ROOT). The plant bridge publishes ego telemetry as
+ROS 2 topics, so ROS never crosses the host/container boundary.
 
-Sensors are enabled for CARLA's native --ros2 (camera published by the server itself).
 The spawn point comes from the rig JSON ("spawn_index"); SPAWN_INDEX env overrides.
 """
 
@@ -102,8 +100,6 @@ def _setup_sensors(world, vehicle, sensors_config):
 
         sensors.append(world.spawn_actor(bp, wp, attach_to=vehicle))
 
-        sensors[-1].enable_for_ros()
-
     return sensors
 
 
@@ -173,11 +169,12 @@ def _setup_npc_traffic(world, traffic_manager, config, hero_spawn_index):
 
 
 def main(args):
-
     world = None
     vehicle = None
     sensors = []
     original_settings = None
+    traffic_manager = None
+    signal.signal(signal.SIGTERM, signal.default_int_handler)
 
     try:
         client = carla.Client(args.host, args.port)
@@ -198,12 +195,12 @@ def main(args):
         # the average rate looked close to the sensor_tick target).
         original_settings = world.get_settings()
         settings = world.get_settings()
-        settings.synchronous_mode = False
+        settings.synchronous_mode = True
         settings.fixed_delta_seconds = 0.05
         world.apply_settings(settings)
 
         traffic_manager = client.get_trafficmanager()
-        traffic_manager.set_synchronous_mode(False)
+        traffic_manager.set_synchronous_mode(True)
 
         with open(args.file) as f:
             config = json.load(f)
@@ -221,12 +218,13 @@ def main(args):
 
         logging.info("Running... (ego up; telemetry is published by the bridge container)")
 
-        TARGET_HZ = 10.0
+        TARGET_HZ = 20.0
         TARGET_PERIOD = 1.0 / TARGET_HZ
 
         while True:
             loop_start = time.time()
 
+            world.tick()
             _follow_vehicle(world, vehicle, spectator)
 
             elapsed = time.time() - loop_start
@@ -240,8 +238,11 @@ def main(args):
     finally:
         # Block further KeyboardInterrupts during cleanup
         signal.signal(signal.SIGINT, signal.SIG_IGN)
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
 
         try:
+            if traffic_manager:
+                traffic_manager.set_synchronous_mode(False)
             if original_settings:
                 logging.info("Restoring original settings")
                 world.apply_settings(original_settings)
@@ -262,7 +263,7 @@ def main(args):
 
 
 if __name__ == "__main__":
-    argparser = argparse.ArgumentParser(description="CARLA ROS2 native")
+    argparser = argparse.ArgumentParser(description="CARLA ego spawn")
     argparser.add_argument(
         "--host",
         metavar="H",

@@ -4,6 +4,7 @@ import socket
 
 import rclpy
 from nav_msgs.msg import Path
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 
@@ -17,6 +18,7 @@ class PathRelayTx(Node):
         port = int(self.get_parameter("udp_port").value)
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._dest = (host, port)
+        self._count = 0
         qos = QoSProfile(
             depth=1,
             history=HistoryPolicy.KEEP_LAST,
@@ -45,6 +47,24 @@ class PathRelayTx(Node):
             ],
         }
         self._sock.sendto(json.dumps(payload).encode("utf-8"), self._dest)
+        self._count += 1
+        if self._count == 1 or self._count % 100 == 0:
+            if msg.poses:
+                first = msg.poses[0].pose.position
+                last = msg.poses[-1].pose.position
+                self.get_logger().info(
+                    "forwarded Path #%d (%d poses, first=(%.2f, %.2f), last=(%.2f, %.2f))"
+                    % (
+                        self._count,
+                        len(msg.poses),
+                        first.x,
+                        first.y,
+                        last.x,
+                        last.y,
+                    )
+                )
+            else:
+                self.get_logger().info("forwarded Path #%d (empty)" % self._count)
 
 
 def main():
@@ -52,7 +72,7 @@ def main():
     node = PathRelayTx()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         node.destroy_node()
