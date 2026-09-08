@@ -4,7 +4,8 @@
   <Domain id="1">
     <General>
       <AllowMulticast>spdp</AllowMulticast>
-      <MaxMessageSize>1400B</MaxMessageSize>
+      <MaxMessageSize>65500B</MaxMessageSize>
+      <FragmentSize>13000B</FragmentSize>
       <Interfaces>
         <NetworkInterface autodetermine="true" priority="default" multicast="default" />
       </Interfaces>

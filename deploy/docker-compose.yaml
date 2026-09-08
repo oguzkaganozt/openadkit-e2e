@@ -38,7 +38,7 @@ services:
     command: >
       bash -lc "source /opt/ros/$${ROS_DISTRO}/setup.bash &&
       source /opt/autoware/setup.bash &&
-      python3 /opt/adapter/path_to_trajectory.py"
+      python3 /opt/adapter/path_to_trajectory.py --ros-args -p input_path_topic:=/vehicle/lane_path_relay"
     restart: on-failure
 
   operation-mode:
@@ -67,9 +67,12 @@ services:
     volumes:
       - ./nodes:/opt/nodes:ro
       - ./cyclonedds.xml:/autoware/cyclonedds.xml:ro
+      - /tmp/carla-0.9.16-cp310-cp310-manylinux_2_31_x86_64.whl:/opt/carla-0.9.16-cp310-cp310-manylinux_2_31_x86_64.whl:ro
     command: >
       bash -lc "source /opt/ros/$${ROS_DISTRO}/setup.bash &&
       source /opt/autoware/setup.bash &&
+      python3 -c 'import carla,numpy' 2>/dev/null ||
+      pip3 install /opt/carla-0.9.16-cp310-cp310-manylinux_2_31_x86_64.whl numpy &&
       python3 /opt/nodes/plant_bridge.py"
     depends_on:
       - carla
@@ -107,7 +110,44 @@ services:
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - ./cyclonedds.xml:/autoware/cyclonedds.xml:ro
+      - ./vision_pilot.conf:/usr/share/visionpilot/config/vision_pilot.conf:ro
       - ./vision_pilot.carla.conf:/usr/share/visionpilot/config/vision_pilot_ros2.conf:ro
     depends_on:
       - carla
+    entrypoint: ["/bin/bash", "-lc"]
+    command:
+      - source /opt/ros/jazzy/setup.bash && exec /usr/bin/VisionPilot
+    restart: on-failure
+
+  path-tx:
+    image: ${VISIONPILOT_IMAGE:-visionpilot:gpu}
+    container_name: openadkit-e2e-path-tx
+    network_mode: host
+    ipc: host
+    environment:
+      - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+      - ROS_DOMAIN_ID=1
+      - CYCLONEDDS_URI=file:///autoware/cyclonedds.xml
+    volumes:
+      - ./cyclonedds.xml:/autoware/cyclonedds.xml:ro
+      - ./nodes:/opt/nodes:ro
+    entrypoint: ["/bin/bash", "-lc"]
+    command:
+      - source /opt/ros/jazzy/setup.bash && python3 /opt/nodes/path_relay_tx.py
+    restart: on-failure
+
+  path-rx:
+    image: ${AUTOWARE_IMAGE:-ghcr.io/autowarefoundation/autoware:universe-20250207}
+    container_name: openadkit-e2e-path-rx
+    network_mode: host
+    ipc: host
+    env_file:
+      - config.env
+    volumes:
+      - ./nodes:/opt/nodes:ro
+      - ./cyclonedds.xml:/autoware/cyclonedds.xml:ro
+    command: >
+      bash -lc "source /opt/ros/$${ROS_DISTRO}/setup.bash &&
+      source /opt/autoware/setup.bash &&
+      python3 /opt/nodes/path_relay_rx.py"
     restart: on-failure
