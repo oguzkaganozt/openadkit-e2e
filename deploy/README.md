@@ -2,12 +2,12 @@
 
 ```
 CARLA (no --ros2)
-  spawn overlay → hero + 1920x1280 cam
-  plant_bridge (Python API) → image / odom / apply_control
+  scenario → hero + sensors + synchronous tick
+  carla_bridge (Python API) → image / odom / apply_control
   VisionPilot → /vehicle/lane_path
   UDP relay → adapter → Trajectory
   domain_bridge 1↔2
-  SI posix → control_cmd → plant → CARLA
+  SI posix → control_cmd → carla_bridge → CARLA
 ```
 
 VP `steering_cmd` is not connected to CARLA.
@@ -20,7 +20,7 @@ VP `steering_cmd` is not connected to CARLA.
 - `docker-compose.yaml`: runtime services and mounts.
 - `config.env`: shared image pins and ROS environment defaults. Keep it compatible with both Bash and Compose env-file syntax; `build.sh` sources it.
 - `config/`: CARLA rig, DDS bridge, and VisionPilot settings and calibration.
-- `nodes/`: runtime Python processes, including `spawn.py` for ego spawn and synchronous ticking.
+- `nodes/`: runtime Python processes, including `scenario.py` for CARLA actors and synchronous ticking.
 
 ## Run
 
@@ -51,13 +51,13 @@ CARLA, Autoware, and SI build image pins live only in `config.env`. Export
 use the same runtime overrides when starting the loop. CARLA image overrides must
 remain compatible with the verified 0.9.16 Python wheel.
 
-The closed drive loop is `run-loop.sh`. It starts the Compose stack: CARLA, spawn/tick, plant, VisionPilot, relays, adapter, domain bridge, and SI. VP `steering_cmd` is not connected to CARLA.
+The closed drive loop is `run-loop.sh`. It starts the Compose stack: CARLA, scenario, CARLA bridge, VisionPilot, relays, adapter, domain bridge, and SI. VP `steering_cmd` is not connected to CARLA.
 
 `docker compose --env-file config.env up` without `--profile vp` is SI-only (no camera planning). For that path run `python3 deploy/nodes/fake_path.py` so the adapter still receives a Trajectory.
 
-Plant talks to CARLA over the Python API (RPC :2000). Do not pass `--ros2` to CARLA — native control is broken on 0.9.16. The build stages the matching CARLA wheel in `/tmp/`. SI posix needs `--dds-interface` on a multicast-capable NIC. An empty VisionPilot Path becomes a 0 m/s stop Trajectory. Plant drops stale `control_cmd` after 0.5 s.
+The CARLA bridge talks to CARLA over the Python API (RPC :2000). Do not pass `--ros2` to CARLA — native control is broken on 0.9.16. The build stages the matching CARLA wheel in `/tmp/`. SI posix needs `--dds-interface` on a multicast-capable NIC. An empty VisionPilot Path becomes a 0 m/s stop Trajectory. The bridge drops stale `control_cmd` after 0.5 s.
 
-The spawn client advances CARLA synchronously at a requested 20 Hz, while the 1920x1280 rig camera runs at 10 Hz. The adapter publishes a fixed 3 m/s target. Plant maps SI velocity/acceleration to CARLA throttle with a cruise feedforward plus speed error term. The rig camera preview is available from the plant on port 8090.
+The scenario client owns the CARLA actors and advances the simulation synchronously at a requested 20 Hz, while the 1920x1280 rig camera runs at 10 Hz. The adapter publishes a fixed 3 m/s target. The CARLA bridge maps SI velocity/acceleration to CARLA throttle with a cruise feedforward plus speed error term. The rig camera preview is available from the bridge on port 8090.
 
 Build SI:
 

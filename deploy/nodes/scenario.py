@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Spawn the VisionPilot ego + sensors in CARLA and follow it with the spectator.
+"""Own the CARLA scenario, simulation ticks, actors, and spectator.
 
 Pure CARLA PythonAPI — no ROS. Needs only the `carla` wheel matching this python
-(deploy/build.sh downloads and verifies it). The plant bridge publishes ego telemetry as
+(deploy/build.sh downloads and verifies it). The CARLA bridge publishes ego telemetry as
 ROS 2 topics, so ROS never crosses the host/container boundary.
 
 The spawn point comes from the rig JSON ("spawn_index"); SPAWN_INDEX env overrides.

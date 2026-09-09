@@ -91,9 +91,9 @@ class _MjpegHandler(BaseHTTPRequestHandler):
             return
 
 
-class PlantBridge(Node):
+class CarlaBridge(Node):
     def __init__(self):
-        super().__init__("plant_bridge")
+        super().__init__("carla_bridge")
         self.declare_parameter("carla_host", "127.0.0.1")
         self.declare_parameter("carla_port", 2000)
         self.declare_parameter("role_name", "hero")
@@ -150,7 +150,7 @@ class PlantBridge(Node):
         threading.Thread(target=self._preview_loop, daemon=True).start()
         threading.Thread(target=self._image_pub_loop, daemon=True).start()
         threading.Thread(target=self._carla_loop, daemon=True).start()
-        self.get_logger().info("plant_bridge: CARLA RPC %s:%s http://0.0.0.0:8090/" % (host, port))
+        self.get_logger().info("carla_bridge: CARLA RPC %s:%s http://0.0.0.0:8090/" % (host, port))
 
     def _connect(self):
         if self._world is not None:
@@ -446,7 +446,7 @@ class PlantBridge(Node):
 
 def main():
     rclpy.init()
-    node = PlantBridge()
+    node = CarlaBridge()
     try:
         rclpy.spin(node)
     except (KeyboardInterrupt, ExternalShutdownException):

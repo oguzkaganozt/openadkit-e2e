@@ -8,8 +8,8 @@ This repo **is** an Open AD Kit deployment: mixed-criticality Compose (CARLA pla
 
 ```
 CARLA 0.9.16 (no --ros2)
-  spawn overlay → hero + 1920x1280 cam
-  plant_bridge (Python RPC :2000) → image / odom / apply_control
+  scenario → hero + sensors + synchronous tick
+  carla_bridge (Python RPC :2000) → image / odom / apply_control
         │
         ▼
 VisionPilot                              DDS domain 1 (Jazzy)
@@ -27,7 +27,7 @@ Safety Island (FreeRTOS POSIX)           DDS domain 2
   → /control/trajectory_follower/control_cmd
         │
         ▼
-plant_bridge → CARLA
+carla_bridge → CARLA
 ```
 
 One controller: SI. VP `steering_cmd` / `throttle_cmd` are not connected to CARLA.
@@ -36,13 +36,13 @@ One controller: SI. VP `steering_cmd` / `throttle_cmd` are not connected to CARL
 | --- | --- |
 | This repo | Open AD Kit deployment (Compose, adapter, overlays) |
 | CARLA 0.9.16 | Plant (RPC, no native ROS) |
-| plant_bridge | Image, odom, measured steer, control apply |
+| carla_bridge | CARLA image, odom, measured steer, and control I/O |
 | VisionPilot | Lane Path in `base_link` |
 | UDP relay | Jazzy Path → Humble |
 | adapter | Path → SI-sized Trajectory |
 | domain_bridge | ROS domain 1 ↔ 2 |
 | Safety Island | Trajectory follower |
-| spawn | Synchronous 20 Hz tick + ego spawn |
+| scenario | CARLA world, actors, and synchronous 20 Hz tick |
 
 ## Run
 
@@ -53,7 +53,7 @@ python3 -m unittest discover -s adapter -v
 ./deploy/run-loop.sh
 ```
 
-`run-loop.sh` starts the full Compose stack (CARLA, spawn, plant, VP, relays, adapter, bridge, SI). Camera preview: `http://127.0.0.1:8090/`.
+`run-loop.sh` starts the full Compose stack (CARLA, scenario, CARLA bridge, VP, relays, adapter, domain bridge, SI). Camera preview: `http://127.0.0.1:8090/`.
 
 Details: `deploy/README.md`.
 
@@ -64,14 +64,14 @@ SI subscriptions (domain 2):
 | Topic | Type | Source |
 | --- | --- | --- |
 | `/planning/scenario_planning/trajectory` | `autoware_planning_msgs/msg/Trajectory` | adapter from VP Path |
-| `/localization/kinematic_state` | `nav_msgs/msg/Odometry` | plant_bridge |
-| `/localization/acceleration` | `geometry_msgs/msg/AccelWithCovarianceStamped` | plant_bridge |
-| `/vehicle/status/steering_status` | `autoware_vehicle_msgs/msg/SteeringReport` | plant_bridge (measured wheel) |
+| `/localization/kinematic_state` | `nav_msgs/msg/Odometry` | carla_bridge |
+| `/localization/acceleration` | `geometry_msgs/msg/AccelWithCovarianceStamped` | carla_bridge |
+| `/vehicle/status/steering_status` | `autoware_vehicle_msgs/msg/SteeringReport` | carla_bridge (measured wheel) |
 | `/system/operation_mode/state` | `autoware_adapi_v1_msgs/msg/OperationModeState` | stub `AUTONOMOUS` |
 
-SI publication: `/control/trajectory_follower/control_cmd` → plant_bridge → CARLA.
+SI publication: `/control/trajectory_follower/control_cmd` → carla_bridge → CARLA.
 
-An empty VP Path becomes a 0 m/s stop Trajectory. Plant drops stale `control_cmd` after 0.5 s.
+An empty VP Path becomes a 0 m/s stop Trajectory. The CARLA bridge drops stale `control_cmd` after 0.5 s.
 
 ## Known issues
 

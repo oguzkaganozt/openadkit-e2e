@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One clean SI drive: spawn ego, wait for a trajectory, then start SI.
+# One clean SI drive: start the scenario, wait for a trajectory, then start SI.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT/deploy"
@@ -32,7 +32,7 @@ wait_for_carla() {
       echo "CARLA ready"
       return 0
     fi
-    if docker exec openadkit-e2e-plant python3 -c \
+    if docker exec openadkit-e2e-carla-bridge python3 -c \
       "import carla; c = carla.Client('127.0.0.1', 2000); c.set_timeout(2); c.get_world()" \
       >/dev/null 2>&1; then
       echo "CARLA ready"
@@ -52,19 +52,19 @@ if [[ ! -x "$SI_BIN" ]]; then
 fi
 
 pkill -f "$SI_BIN" 2>/dev/null || true
-pkill -f "$ROOT/deploy/nodes/spawn.py" 2>/dev/null || true
+pkill -f "$ROOT/deploy/nodes/scenario.py" 2>/dev/null || true
 
 "${COMPOSE[@]}" up -d carla
 wait_for_carla
-"${COMPOSE[@]}" up -d --force-recreate spawn
+"${COMPOSE[@]}" up -d --force-recreate scenario
 started_at="$(date --iso-8601=seconds)"
-wait_for_log openadkit-e2e-spawn "ego up" "CARLA spawn"
+wait_for_log openadkit-e2e-scenario "ego up" "CARLA scenario"
 "${COMPOSE[@]}" up -d
 "${COMPOSE[@]}" up -d --force-recreate si
 started_at="$(date --iso-8601=seconds)"
-"${COMPOSE[@]}" restart visionpilot path-tx path-rx adapter plant
+"${COMPOSE[@]}" restart visionpilot path-tx path-rx adapter carla-bridge
 wait_for_log openadkit-e2e-path-tx "forwarded Path #" "VP Path"
 wait_for_log openadkit-e2e-path-rx "published relayed Path #" "UDP relay"
 wait_for_log openadkit-e2e-adapter "published Trajectory #" "adapter Trajectory"
-wait_for_log openadkit-e2e-plant "applied control #" "SI control"
+wait_for_log openadkit-e2e-carla-bridge "applied control #" "SI control"
 echo "SI started. Camera preview: http://127.0.0.1:8090/"

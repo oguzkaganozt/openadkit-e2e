@@ -56,9 +56,9 @@ services:
       python3 /opt/nodes/operation_mode.py"
     restart: on-failure
 
-  plant:
+  carla-bridge:
     image: ${AUTOWARE_IMAGE:?Use --env-file config.env}
-    container_name: openadkit-e2e-plant
+    container_name: openadkit-e2e-carla-bridge
     network_mode: host
     ipc: host
     env_file:
@@ -72,7 +72,7 @@ services:
       source /opt/autoware/setup.bash &&
       python3 -c 'import carla,numpy' 2>/dev/null ||
       pip3 install /opt/carla-0.9.16-cp310-cp310-manylinux_2_31_x86_64.whl numpy &&
-      python3 /opt/nodes/plant_bridge.py"
+      python3 /opt/nodes/carla_bridge.py"
     depends_on:
       - carla
     restart: on-failure
@@ -148,22 +148,22 @@ services:
       python3 /opt/nodes/path_relay_rx.py"
     restart: on-failure
 
-  spawn:
+  scenario:
     image: ${AUTOWARE_IMAGE:?Use --env-file config.env}
-    container_name: openadkit-e2e-spawn
+    container_name: openadkit-e2e-scenario
     network_mode: host
     ipc: host
     init: true
     environment:
       - SPAWN_INDEX=${SPAWN_INDEX:-184}
     volumes:
-      - ./nodes/spawn.py:/opt/nodes/spawn.py:ro
+      - ./nodes/scenario.py:/opt/nodes/scenario.py:ro
       - ./config/carla-rig.json:/opt/config/carla-rig.json:ro
       - /tmp/carla-0.9.16-cp310-cp310-manylinux_2_31_x86_64.whl:/opt/carla-0.9.16-cp310-cp310-manylinux_2_31_x86_64.whl:ro
     command: >
       bash -lc "python3 -c 'import carla' 2>/dev/null ||
       pip3 install /opt/carla-0.9.16-cp310-cp310-manylinux_2_31_x86_64.whl &&
-      python3 /opt/nodes/spawn.py --host 127.0.0.1 --port 2000 -f /opt/config/carla-rig.json"
+      python3 /opt/nodes/scenario.py --host 127.0.0.1 --port 2000 -f /opt/config/carla-rig.json"
     depends_on:
       - carla
     restart: on-failure
@@ -181,6 +181,6 @@ services:
       - exec /opt/si/actuation_freertos
     depends_on:
       - domain-bridge
-      - plant
+      - carla-bridge
       - adapter
     restart: on-failure
