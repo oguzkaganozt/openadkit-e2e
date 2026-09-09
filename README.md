@@ -1,6 +1,6 @@
 # openadkit-e2e
 
-L2 closed-loop simulation: **VisionPilot plans, Autoware Safety Island drives, CARLA is the plant, Open AD Kit deploys.**
+L2 closed-loop simulation: **VisionPilot plans, Autoware Safety Island drives, CARLA is the plant.**
 
 This repo is the integration layer (adapter, compose, topic contract). Upstream changes belong in forks of those projects and are contributed back via pull request.
 
@@ -36,7 +36,6 @@ One controller: SI. Disable VisionPilot actuation when SI is on.
 | Piece | Role |
 | --- | --- |
 | CARLA 0.9.16 | Plant (camera, odom, steer, accel) |
-| Open AD Kit | Containers, compose, mixed-criticality deploy |
 | VisionPilot 1.0 | Hybrid L2 perception + plan (path, CIPO) |
 | Autoware SI | Isolated trajectory follower — not perception |
 | This repo | Path→Trajectory adapter, compose, overlays |
@@ -81,8 +80,7 @@ See `deploy/README.md`.
 
 Git submodules under `upstream/` pin the SHAs this integration is built against:
 
-- [vision_pilot](https://github.com/autowarefoundation/vision_pilot)
-- [openadkit](https://github.com/autowarefoundation/openadkit)
+- [vision_pilot](https://github.com/oguzkaganozt/autoware_vision_pilot) (`feat/lane-path`)
 - [autoware-safety-island](https://github.com/autowarefoundation/autoware-safety-island)
 
 ```bash

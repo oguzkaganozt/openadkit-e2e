@@ -2,9 +2,6 @@
 	path = upstream/vision_pilot
 	url = https://github.com/oguzkaganozt/autoware_vision_pilot.git
 	branch = feat/lane-path
-[submodule "upstream/openadkit"]
-	path = upstream/openadkit
-	url = https://github.com/autowarefoundation/openadkit.git
 [submodule "upstream/autoware-safety-island"]
 	path = upstream/autoware-safety-island
 	url = https://github.com/autowarefoundation/autoware-safety-island.git

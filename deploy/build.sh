@@ -91,7 +91,6 @@ docker info --format '{{json .Runtimes}}' | grep -q '"nvidia"' || {
 echo "Initializing pinned submodules..."
 git -C "$ROOT" submodule update --init \
   upstream/autoware-safety-island \
-  upstream/openadkit \
   upstream/vision_pilot
 git -C "$SI" submodule update --init cyclonedds freertos-kernel zephyr
 
