@@ -1,74 +1,121 @@
-# Deploy
+# Deployment guide
 
-```
-CARLA (no --ros2)
-  scenario → hero + sensors + synchronous tick
-  carla_bridge (Python API) → image / odom / apply_control
-  VisionPilot → /vehicle/lane_path
-  UDP relay → adapter → Trajectory
-  domain_bridge 1↔2
-  SI posix → control_cmd → carla_bridge → CARLA
-```
+Run VisionPilot, Safety Island, and CARLA as a closed-loop Compose stack.
+See the [main README](../README.md#how-it-works) for the architecture.
 
-VP `steering_cmd` is not connected to CARLA.
+## Setup and build
 
-## Layout
+Run commands from the repository root unless a block starts with `cd`.
 
-- `setup.sh`: one-time Ubuntu host setup.
-- `build.sh`: download and build runtime artifacts.
-- `run-loop.sh`: start the closed loop and check readiness.
-- `docker-compose.yaml`: runtime services and mounts.
-- `config.env`: shared image pins and ROS environment defaults. Keep it compatible with both Bash and Compose env-file syntax; `build.sh` sources it.
-- `config/`: CARLA rig, DDS bridge, and VisionPilot settings and calibration.
-- `nodes/`: runtime Python processes, including `scenario.py` for CARLA actors and synchronous ticking.
+1. Use Ubuntu x86-64 with a working NVIDIA driver (`nvidia-smi`), sudo, Git,
+   curl, and Python 3.10. The CARLA wheel requires CPython 3.10.
+2. Run `./deploy/setup.sh` once to install Docker, Compose, Python venv support,
+   and the NVIDIA container runtime. Log out and back in if prompted.
+3. Build with your multicast-capable network interface:
 
-## Run
+   ```bash
+   ./deploy/build.sh --dds-interface ens3
+   ```
+
+The build initializes submodules, verifies and downloads the CARLA 0.9.16 wheel
+to `/tmp/`, builds VisionPilot GPU and Safety Island, pulls runtime images, and
+builds the DDS domain bridge. Add `--run` to start the loop after building.
+
+## Start, inspect, and stop
 
 ```bash
-# 0. once per Ubuntu GPU host: Docker, Compose, python3-venv, NVIDIA runtime
-./deploy/setup.sh
-
-# 1. build/download pinned runtime artifacts
-./deploy/build.sh --dds-interface ens3
-
-# 2. adapter tests
-python3 -m unittest discover -s adapter -v
-
-# 3. closed loop (CARLA + VP + adapter + SI)
 ./deploy/run-loop.sh
 ```
 
-`setup.sh` installs Docker, Compose, python3-venv, and the NVIDIA container runtime on
-Ubuntu. Keep it separate from `build.sh`: host packages need sudo and should run once,
-while `build.sh` rebuilds repo artifacts. `build.sh` requires Git, curl, Python 3 with venv, Docker Compose, an NVIDIA driver, and the
-Docker NVIDIA runtime. It verifies the official CARLA 0.9.16 CPython 3.10 wheel,
-builds `visionpilot:gpu-ros2`, builds the Safety Island in its pinned devcontainer,
-pulls the runtime images, and builds the domain bridge. Pass `--run` to start the
-loop after a successful build.
+The script starts the full stack and checks that paths, trajectories, and control
+commands are flowing. View the camera at **<http://127.0.0.1:8090/>**.
 
-CARLA, Autoware, and SI build image pins live only in `config.env`. Export
-`CARLA_IMAGE`, `AUTOWARE_IMAGE`, or `SI_BUILD_IMAGE` to override them for a build;
-use the same runtime overrides when starting the loop. CARLA image overrides must
-remain compatible with the verified 0.9.16 Python wheel.
+For service status, logs, and shutdown:
 
-VisionPilot CPU vs GPU is three matching settings: `VISIONPILOT_IMAGE` and
-`VISIONPILOT_RUNTIME` in `config.env`, plus `engine.provider` in
-`config/vision_pilot.conf`. GPU: `visionpilot:gpu-ros2`, `nvidia`, `cuda`.
-CPU: `visionpilot:cpu-ros2`, `runc`, `cpu`. CARLA stays on NVIDIA. Build the
-image with `./build.sh --gpu --ros2` or `./build.sh --cpu --ros2` in
-`upstream/vision_pilot/VisionPilot/docker`.
+```bash
+cd deploy
+docker compose --env-file config.env --profile vp ps
+docker compose --env-file config.env --profile vp logs -f
+docker compose --env-file config.env --profile vp down
+```
 
-The closed drive loop is `run-loop.sh`. It starts the Compose stack: CARLA, scenario, CARLA bridge, VisionPilot, relays, adapter, domain bridge, and SI. VP `steering_cmd` is not connected to CARLA.
+## Configuration
 
-`docker compose --env-file config.env up` without `--profile vp` is SI-only (no camera planning). For that path run `python3 deploy/nodes/fake_path.py` so the adapter still receives a Trajectory.
+| File | Settings |
+| --- | --- |
+| [`config.env`](config.env) | Image pins, container runtime, and ROS defaults |
+| [`config/vision_pilot.conf`](config/vision_pilot.conf) | VisionPilot inference provider |
+| [`config/vision_pilot.carla.conf`](config/vision_pilot.carla.conf), [`config/H.yaml`](config/H.yaml) | VisionPilot ROS topics and camera calibration |
+| [`config/carla-rig.json`](config/carla-rig.json) | Vehicle and camera rig |
+| [`config/bridge-config.yaml`](config/bridge-config.yaml), [`config/cyclonedds.xml`](config/cyclonedds.xml) | DDS topic routing and networking |
+| [`docker-compose.yaml`](docker-compose.yaml) | Services and mounts; Python processes live in [`nodes/`](nodes/) |
 
-The CARLA bridge talks to CARLA over the Python API (RPC :2000). Do not pass `--ros2` to CARLA — native control is broken on 0.9.16. The build stages the matching CARLA wheel in `/tmp/`. SI posix needs `--dds-interface` on a multicast-capable NIC. An empty VisionPilot Path becomes a 0 m/s stop Trajectory. The bridge drops stale `control_cmd` after 0.5 s.
+Keep `config.env` compatible with both Bash and Compose; `build.sh` sources it.
+To override image pins, export `CARLA_IMAGE`, `AUTOWARE_IMAGE`, or `SI_BUILD_IMAGE`
+before building. Keep runtime overrides consistent when starting the loop.
+CARLA overrides must match the verified 0.9.16 Python wheel; do not enable
+`--ros2`, because native control is broken in this version.
 
-The scenario client owns the CARLA actors and advances the simulation synchronously at a requested 20 Hz, while the 1920x1280 rig camera runs at 10 Hz. The adapter publishes a fixed 3 m/s target. The CARLA bridge maps SI velocity/acceleration to CARLA throttle with a cruise feedforward plus speed error term. The rig camera preview is available from the bridge on port 8090.
+### VisionPilot CPU or GPU
 
-Build SI:
+CARLA always needs NVIDIA. To change VisionPilot inference, match all three settings:
+
+| Setting | GPU (default) | CPU |
+| --- | --- | --- |
+| `VISIONPILOT_IMAGE` in `config.env` | `visionpilot:gpu-ros2` | `visionpilot:cpu-ros2` |
+| `VISIONPILOT_RUNTIME` in `config.env` | `nvidia` | `runc` |
+| `engine.provider` in `config/vision_pilot.conf` | `cuda` | `cpu` |
+
+The deployment build creates the GPU image. For CPU inference, build the CPU image:
+
+```bash
+cd upstream/vision_pilot/VisionPilot/docker
+./build.sh --cpu --ros2
+```
+
+Then start the loop again. CPU path publication is slower than the 10 Hz camera.
+
+## Runtime reference
+
+- **Adapter:** converts `/vehicle/lane_path_relay` from `base_link` to a `map`
+  trajectory, targeting 3 m/s with up to 13 points, a 25 m extent budget, and ≤1200 B.
+- **Stop behavior:** an empty path produces a 0 m/s trajectory. The CARLA bridge
+  drops control commands older than 0.5 s.
+- **CARLA bridge:** uses Python RPC on port 2000 and maps Safety Island's velocity
+  and acceleration commands to throttle using feedforward and speed error.
+- **Domains:** VisionPilot and the adapter use domain 1; Safety Island uses domain 2.
+  The UDP relay transfers paths from Jazzy to Humble; the DDS bridge connects domains.
+
+### Safety Island topics
+
+Inputs are bridged from domain 1 to domain 2:
+
+| Topic | Type | Source |
+| --- | --- | --- |
+| `/planning/scenario_planning/trajectory` | `autoware_planning_msgs/msg/Trajectory` | Adapter |
+| `/localization/kinematic_state` | `nav_msgs/msg/Odometry` | CARLA bridge |
+| `/localization/acceleration` | `geometry_msgs/msg/AccelWithCovarianceStamped` | CARLA bridge |
+| `/vehicle/status/steering_status` | `autoware_vehicle_msgs/msg/SteeringReport` | CARLA bridge, measured steering |
+| `/system/operation_mode/state` | `autoware_adapi_v1_msgs/msg/OperationModeState` | `AUTONOMOUS` stub |
+
+Output: `/control/trajectory_follower/control_cmd` (`autoware_control_msgs/msg/Control`),
+bridged back to domain 1 and applied by the CARLA bridge.
+
+## Development
+
+Run adapter tests without ROS:
+
+```bash
+python3 -m unittest discover -s adapter -v
+```
+
+For an SI-only run, omit `--profile vp` from Compose startup. In a ROS 2 Humble
+environment with `ROS_DOMAIN_ID=1`, run `python3 deploy/nodes/fake_path.py`
+to feed a synthetic path to the adapter.
+
+To rebuild Safety Island directly in its build environment:
 
 ```bash
 cd upstream/autoware-safety-island
-./build.sh --platform freertos-posix -d build/freertos-posix --control-output DDS_ONLY --dds-interface <nic>
+./build.sh --platform freertos-posix -d build/freertos-posix --control-output DDS_ONLY --dds-interface ens3
 ```

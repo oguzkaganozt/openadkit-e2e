@@ -1,117 +1,63 @@
 # openadkit-e2e
 
-L2 closed-loop simulation: **VisionPilot plans, Autoware Safety Island drives, CARLA is the plant.**
+An Open AD Kit deployment for L2 closed-loop simulation:
+**VisionPilot plans, Autoware Safety Island controls, and CARLA simulates.**
 
-This repo **is** an Open AD Kit deployment: mixed-criticality Compose (CARLA plant, VP planning, isolated SI follower). It does not vendor the `openadkit` git tree; the stack lives here. The only forked upstream is VisionPilot (`feat/lane-path`), which publishes `/vehicle/lane_path`. Safety Island is a pinned Autoware Foundation checkout.
+The stack runs with Docker Compose. This repo provides the deployment, configuration,
+and adapter that connects VisionPilot's lane path to Safety Island's trajectory follower.
 
-## Architecture
+## How it works
 
-```
-CARLA 0.9.16 (no --ros2)
-  scenario → hero + sensors + synchronous tick
-  carla_bridge (Python RPC :2000) → image / odom / apply_control
-        │
-        ▼
-VisionPilot                              DDS domain 1 (Jazzy)
-  → /vehicle/lane_path
-        │
-        ▼
-UDP relay → adapter
-  Path → Trajectory (3 m/s, ≤13 points)
-        │
-        ▼
-domain_bridge 1 ↔ 2
-        │
-        ▼
-Safety Island (FreeRTOS POSIX)           DDS domain 2
-  → /control/trajectory_follower/control_cmd
-        │
-        ▼
-carla_bridge → CARLA
+```mermaid
+flowchart TD
+    CARLA["CARLA 0.9.16"] <-->|Python RPC| Bridge["CARLA bridge"]
+    Bridge -->|Camera images| VP["VisionPilot · ROS 2 Jazzy"]
+    VP -->|Lane path| Relay["UDP relay · Jazzy to Humble"]
+    Relay --> Adapter["Path-to-trajectory adapter"]
+    Adapter -->|Trajectory| DDS["DDS domain bridge · 1 ↔ 2"]
+    Bridge -->|Vehicle state| DDS
+    DDS --> SI["Safety Island · FreeRTOS POSIX"]
+    SI -->|Control command| DDS
+    DDS -->|Control command| Bridge
 ```
 
-One controller: SI. VP `steering_cmd` / `throttle_cmd` are not connected to CARLA.
+Safety Island is the only controller; VisionPilot's steering and throttle commands
+are not connected to CARLA. A scenario process creates the vehicle and sensors and
+advances the simulation at a requested 20 Hz, with camera images at 10 Hz.
 
-| Piece | Role |
-| --- | --- |
-| This repo | Open AD Kit deployment (Compose, adapter, overlays) |
-| CARLA 0.9.16 | Plant (RPC, no native ROS) |
-| carla_bridge | CARLA image, odom, measured steer, and control I/O |
-| VisionPilot | Lane Path in `base_link` |
-| UDP relay | Jazzy Path → Humble |
-| adapter | Path → SI-sized Trajectory |
-| domain_bridge | ROS domain 1 ↔ 2 |
-| Safety Island | Trajectory follower |
-| scenario | CARLA world, actors, and synchronous 20 Hz tick |
+## Quick start
 
-## Run
+Use an Ubuntu x86-64 host with a working NVIDIA driver, Git, curl, and Python 3.10
+with venv support. Run these commands from the repository root:
 
 ```bash
 ./deploy/setup.sh
+# Log out and back in if setup asks you to.
 ./deploy/build.sh --dds-interface ens3
-python3 -m unittest discover -s adapter -v
 ./deploy/run-loop.sh
 ```
 
-`run-loop.sh` starts the full Compose stack (CARLA, scenario, CARLA bridge, VP, relays, adapter, domain bridge, SI). Camera preview: `http://127.0.0.1:8090/`.
+Replace `ens3` with your multicast-capable network interface. The build script
+initializes the required submodules and builds the GPU stack.
 
-Details: `deploy/README.md`.
+Open the **[camera preview](http://127.0.0.1:8090/)** once the loop is ready.
+See the **[deployment guide](deploy/README.md)** for configuration, logs, and shutdown.
 
-## VisionPilot CPU or GPU
+## Known limitation
 
-CARLA stays on NVIDIA. VisionPilot inference can be CUDA or CPU. Set all three together:
+In Town04, VisionPilot can switch between lanes at splits and merges, causing
+weaving or Safety Island `too large yaw error` messages. An empty path produces
+a stop trajectory, and the vehicle can remain stopped. The adapter does not
+correct this path-selection limitation.
 
-| | GPU | CPU |
-| --- | --- | --- |
-| `VISIONPILOT_IMAGE` in `deploy/config.env` | `visionpilot:gpu-ros2` | `visionpilot:cpu-ros2` |
-| `VISIONPILOT_RUNTIME` in `deploy/config.env` | `nvidia` | `runc` |
-| `engine.provider` in `deploy/config/vision_pilot.conf` | `cuda` | `cpu` |
+## Repository
 
-Build the matching image once:
+| Path | Contents |
+| --- | --- |
+| [`deploy/`](deploy/README.md) | Setup, build, Compose services, and runtime configuration |
+| [`adapter/`](adapter/path_to_trajectory.py) | Lane path → Autoware trajectory conversion |
+| [`upstream/vision_pilot`](https://github.com/oguzkaganozt/autoware_vision_pilot/tree/feat/lane-path) | VisionPilot fork that publishes `/vehicle/lane_path` |
+| [`upstream/autoware-safety-island`](https://github.com/autowarefoundation/autoware-safety-island) | Pinned Safety Island submodule |
 
-```bash
-cd upstream/vision_pilot/VisionPilot/docker
-./build.sh --gpu --ros2   # visionpilot:gpu-ros2
-./build.sh --cpu --ros2   # visionpilot:cpu-ros2
-```
-
-Then `./deploy/run-loop.sh`. CPU Path publish rate is lower than the 10 Hz camera.
-
-## Topic contract
-
-SI subscriptions (domain 2):
-
-| Topic | Type | Source |
-| --- | --- | --- |
-| `/planning/scenario_planning/trajectory` | `autoware_planning_msgs/msg/Trajectory` | adapter from VP Path |
-| `/localization/kinematic_state` | `nav_msgs/msg/Odometry` | carla_bridge |
-| `/localization/acceleration` | `geometry_msgs/msg/AccelWithCovarianceStamped` | carla_bridge |
-| `/vehicle/status/steering_status` | `autoware_vehicle_msgs/msg/SteeringReport` | carla_bridge (measured wheel) |
-| `/system/operation_mode/state` | `autoware_adapi_v1_msgs/msg/OperationModeState` | stub `AUTONOMOUS` |
-
-SI publication: `/control/trajectory_follower/control_cmd` → carla_bridge → CARLA.
-
-An empty VP Path becomes a 0 m/s stop Trajectory. The CARLA bridge drops stale `control_cmd` after 0.5 s.
-
-## Known issues
-
-### VisionPilot path instability at lane splits and merges
-
-In CARLA Town04, VisionPilot can briefly alternate between plausible lanes at splits and merges. This can shorten or abruptly change `/vehicle/lane_path`, make the vehicle weave, and cause Safety Island to report `MPC: failed due to getting MPC Data (too large yaw error)`. The path usually recovers without stopping, but if VisionPilot publishes an empty Path, the adapter intentionally sends a 0 m/s stop Trajectory and the vehicle can remain stopped. This is currently treated as a VisionPilot path-selection limitation; the deployment adapter does not mask it.
-
-## Adapter
-
-`adapter/path_to_trajectory.py` converts VP `/vehicle/lane_path` (`base_link`) to `/planning/scenario_planning/trajectory` (map, ≤13 points, 25 m, ≤1200 B, 3 m/s).
-
-## Upstream
-
-Submodules under `upstream/`:
-
-- [vision_pilot](https://github.com/oguzkaganozt/autoware_vision_pilot) (`feat/lane-path`)
-- [autoware-safety-island](https://github.com/autowarefoundation/autoware-safety-island)
-
-```bash
-git submodule update --init --recursive
-```
-
-CARLA is `carlasim/carla:0.9.16`, not a git checkout. Do not pass `--ros2` to CARLA.
+CARLA uses the `carlasim/carla:0.9.16` container image and its Python API.
+Native ROS integration (`--ros2`) is disabled.
