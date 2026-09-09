@@ -94,17 +94,15 @@ services:
 
   visionpilot:
     profiles: ["vp"]
-    image: ${VISIONPILOT_IMAGE:-visionpilot:gpu-ros2}
+    image: ${VISIONPILOT_IMAGE:?Use --env-file config.env}
     container_name: openadkit-e2e-visionpilot
     network_mode: host
     ipc: host
-    runtime: nvidia
+    runtime: ${VISIONPILOT_RUNTIME:-nvidia}
     environment:
       - DISPLAY=${DISPLAY}
       - LIBGL_ALWAYS_SOFTWARE=1
       - QT_X11_NO_MITSHM=1
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=all
       - ROS_DOMAIN_ID=1
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
@@ -119,7 +117,7 @@ services:
 
   path-tx:
     profiles: ["vp"]
-    image: ${VISIONPILOT_IMAGE:-visionpilot:gpu-ros2}
+    image: ${VISIONPILOT_IMAGE:?Use --env-file config.env}
     container_name: openadkit-e2e-path-tx
     network_mode: host
     ipc: host

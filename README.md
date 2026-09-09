@@ -57,6 +57,26 @@ python3 -m unittest discover -s adapter -v
 
 Details: `deploy/README.md`.
 
+## VisionPilot CPU or GPU
+
+CARLA stays on NVIDIA. VisionPilot inference can be CUDA or CPU. Set all three together:
+
+| | GPU | CPU |
+| --- | --- | --- |
+| `VISIONPILOT_IMAGE` in `deploy/config.env` | `visionpilot:gpu-ros2` | `visionpilot:cpu-ros2` |
+| `VISIONPILOT_RUNTIME` in `deploy/config.env` | `nvidia` | `runc` |
+| `engine.provider` in `deploy/config/vision_pilot.conf` | `cuda` | `cpu` |
+
+Build the matching image once:
+
+```bash
+cd upstream/vision_pilot/VisionPilot/docker
+./build.sh --gpu --ros2   # visionpilot:gpu-ros2
+./build.sh --cpu --ros2   # visionpilot:cpu-ros2
+```
+
+Then `./deploy/run-loop.sh`. CPU Path publish rate is lower than the 10 Hz camera.
+
 ## Topic contract
 
 SI subscriptions (domain 2):

@@ -51,6 +51,13 @@ CARLA, Autoware, and SI build image pins live only in `config.env`. Export
 use the same runtime overrides when starting the loop. CARLA image overrides must
 remain compatible with the verified 0.9.16 Python wheel.
 
+VisionPilot CPU vs GPU is three matching settings: `VISIONPILOT_IMAGE` and
+`VISIONPILOT_RUNTIME` in `config.env`, plus `engine.provider` in
+`config/vision_pilot.conf`. GPU: `visionpilot:gpu-ros2`, `nvidia`, `cuda`.
+CPU: `visionpilot:cpu-ros2`, `runc`, `cpu`. CARLA stays on NVIDIA. Build the
+image with `./build.sh --gpu --ros2` or `./build.sh --cpu --ros2` in
+`upstream/vision_pilot/VisionPilot/docker`.
+
 The closed drive loop is `run-loop.sh`. It starts the Compose stack: CARLA, scenario, CARLA bridge, VisionPilot, relays, adapter, domain bridge, and SI. VP `steering_cmd` is not connected to CARLA.
 
 `docker compose --env-file config.env up` without `--profile vp` is SI-only (no camera planning). For that path run `python3 deploy/nodes/fake_path.py` so the adapter still receives a Trajectory.
