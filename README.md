@@ -2,83 +2,84 @@
 
 L2 closed-loop simulation: **VisionPilot plans, Autoware Safety Island drives, CARLA is the plant.**
 
-This repo is the integration layer (adapter, compose, topic contract). Upstream changes belong in forks of those projects and are contributed back via pull request.
+This repo **is** an Open AD Kit deployment: mixed-criticality Compose (CARLA plant, VP planning, isolated SI follower). It does not vendor the `openadkit` git tree; the stack lives here. The only forked upstream is VisionPilot (`feat/lane-path`), which publishes `/vehicle/lane_path`. Safety Island is a pinned Autoware Foundation checkout.
 
 ## Architecture
 
 ```
-CARLA 0.9.16 (--ros2)
-  camera / odom / steer / accel
+CARLA 0.9.16 (no --ros2)
+  spawn overlay → hero + 1920x1280 cam
+  plant_bridge (Python RPC :2000) → image / odom / apply_control
         │
         ▼
-VisionPilot (local Path publisher)      DDS domain 1
-  AutoSpeed 2.0 + AutoSteer 2.0 + AutoDrive
-  → /vehicle/lane_path (nav_msgs/Path)
+VisionPilot                              DDS domain 1 (Jazzy)
+  → /vehicle/lane_path
         │
         ▼
-adapter (this repo)
-  Path → autoware_planning_msgs/Trajectory
+UDP relay → adapter
+  Path → Trajectory (3 m/s, ≤13 points)
         │
         ▼
-domain_bridge 1 → 2
+domain_bridge 1 ↔ 2
         │
         ▼
-Autoware Safety Island                  DDS domain 2
-  MPC lateral + PID longitudinal
+Safety Island (FreeRTOS POSIX)           DDS domain 2
   → /control/trajectory_follower/control_cmd
         │
         ▼
-CARLA actuators
+plant_bridge → CARLA
 ```
 
-One controller: SI. Disable VisionPilot actuation when SI is on.
+One controller: SI. VP `steering_cmd` / `throttle_cmd` are not connected to CARLA.
 
 | Piece | Role |
 | --- | --- |
-| CARLA 0.9.16 | Plant (camera, odom, steer, accel) |
-| VisionPilot 1.0 | Hybrid L2 perception + plan (path, CIPO) |
-| Autoware SI | Isolated trajectory follower — not perception |
-| This repo | Path→Trajectory adapter, compose, overlays |
+| This repo | Open AD Kit deployment (Compose, adapter, overlays) |
+| CARLA 0.9.16 | Plant (RPC, no native ROS) |
+| plant_bridge | Image, odom, measured steer, control apply |
+| VisionPilot | Lane Path in `base_link` |
+| UDP relay | Jazzy Path → Humble |
+| adapter | Path → SI-sized Trajectory |
+| domain_bridge | ROS domain 1 ↔ 2 |
+| Safety Island | Trajectory follower |
+| spawn | Synchronous 20 Hz tick + ego spawn |
 
-Phase 1 is NVIDIA-style SI: independent **compute**, shared camera. Do not claim independent perception.
+## Run
 
-## Topic contract (phase 1)
+```bash
+./deploy/setup.sh
+./deploy/build.sh --dds-interface ens3
+python3 -m unittest discover -s adapter -v
+./deploy/run-loop.sh
+```
+
+`run-loop.sh` starts the full Compose stack (CARLA, spawn, plant, VP, relays, adapter, bridge, SI). Camera preview: `http://127.0.0.1:8090/`.
+
+Details: `deploy/README.md`.
+
+## Topic contract
 
 SI subscriptions (domain 2):
 
 | Topic | Type | Source |
 | --- | --- | --- |
-| `/planning/scenario_planning/trajectory` | `autoware_planning_msgs/msg/Trajectory` | adapter from VP `/vehicle/lane_path` |
-| `/localization/kinematic_state` | `nav_msgs/msg/Odometry` | CARLA odom |
-| `/localization/acceleration` | `geometry_msgs/msg/AccelWithCovarianceStamped` | CARLA |
-| `/vehicle/status/steering_status` | `autoware_vehicle_msgs/msg/SteeringReport` | CARLA |
+| `/planning/scenario_planning/trajectory` | `autoware_planning_msgs/msg/Trajectory` | adapter from VP Path |
+| `/localization/kinematic_state` | `nav_msgs/msg/Odometry` | plant_bridge |
+| `/localization/acceleration` | `geometry_msgs/msg/AccelWithCovarianceStamped` | plant_bridge |
+| `/vehicle/status/steering_status` | `autoware_vehicle_msgs/msg/SteeringReport` | plant_bridge (measured wheel) |
 | `/system/operation_mode/state` | `autoware_adapi_v1_msgs/msg/OperationModeState` | stub `AUTONOMOUS` |
 
-SI publication: `/control/trajectory_follower/control_cmd` (`autoware_control_msgs/msg/Control`) → CARLA.
+SI publication: `/control/trajectory_follower/control_cmd` → plant_bridge → CARLA.
 
-## Phases
-
-1. **Ship:** VP plans, SI drives. Adapter is the work. SI on `freertos-posix`, then FVP.
-2. RSS/CIPO selector may clip the trajectory before the bridge (same camera, different rules).
-3. Optional CARLA radar as a diverse CIPO check. Not a CES blocker.
-
-Do not run VP control and SI control together. Do not feed SI Ackermann. Do not put AutoE2E in this loop.
+An empty VP Path becomes a 0 m/s stop Trajectory. Plant drops stale `control_cmd` after 0.5 s.
 
 ## Adapter
 
-`adapter/path_to_trajectory.py` converts VP `/vehicle/lane_path` (`base_link`) to an SI-sized `/planning/scenario_planning/trajectory` (odom/map, ≤13 points, 25 m, ≤1200 B).
-
-```bash
-python3 -m unittest discover -s adapter -v
-cd deploy && docker compose --env-file config.env up
-./run-si.sh
-```
-
-See `deploy/README.md`.
+`adapter/path_to_trajectory.py` converts VP `/vehicle/lane_path` (`base_link`) to `/planning/scenario_planning/trajectory` (map, ≤13 points, 25 m, ≤1200 B, 3 m/s).
 
 ## Upstream
 
-Git submodules under `upstream/` pin the SHAs this integration is built against:
+Submodules under `upstream/`:
 
 - [vision_pilot](https://github.com/oguzkaganozt/autoware_vision_pilot) (`feat/lane-path`)
 - [autoware-safety-island](https://github.com/autowarefoundation/autoware-safety-island)
@@ -87,4 +88,4 @@ Git submodules under `upstream/` pin the SHAs this integration is built against:
 git submodule update --init --recursive
 ```
 
-CARLA is the `carlasim/carla:0.9.16` image, not a git checkout.
+CARLA is `carlasim/carla:0.9.16`, not a git checkout. Do not pass `--ros2` to CARLA.
