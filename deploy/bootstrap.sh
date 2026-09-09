@@ -59,7 +59,7 @@ require_command() {
   }
 }
 
-for command in awk curl docker git ip nvidia-smi sha256sum; do
+for command in awk curl docker git ip nvidia-smi python3 sha256sum; do
   require_command "$command"
 done
 
@@ -108,6 +108,15 @@ if ! printf '%s  %s\n' "$CARLA_WHEEL_SHA256" "$CARLA_WHEEL" | sha256sum -c - --s
 else
   echo "CARLA wheel checksum OK."
 fi
+
+echo "Installing host CARLA Python venv..."
+if [[ ! -x /tmp/carla-venv/bin/python ]]; then
+  python3 -m venv /tmp/carla-venv || {
+    echo "python3-venv is required to create /tmp/carla-venv" >&2
+    exit 1
+  }
+fi
+/tmp/carla-venv/bin/pip install --disable-pip-version-check "$CARLA_WHEEL"
 
 echo "Building visionpilot:gpu-ros2..."
 (

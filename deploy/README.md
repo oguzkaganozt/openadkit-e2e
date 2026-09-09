@@ -30,7 +30,7 @@ docker compose --env-file config.env up
 docker compose --env-file config.env --profile vp up
 ```
 
-`bootstrap.sh` requires Git, curl, Docker Compose, an NVIDIA driver, and the
+`bootstrap.sh` requires Git, curl, Python 3 with venv, Docker Compose, an NVIDIA driver, and the
 Docker NVIDIA runtime. It verifies the official CARLA 0.9.16 CPython 3.10 wheel,
 builds `visionpilot:gpu-ros2`, builds the Safety Island in its pinned devcontainer,
 pulls the runtime images, and builds the domain bridge. Pass `--run` to start the
