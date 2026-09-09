@@ -20,19 +20,32 @@ wait_for_log() {
   return 1
 }
 
-docker compose --env-file config.env --profile vp up -d
-for _ in $(seq 1 60); do
-  if docker exec openadkit-e2e-plant python3 -c \
-    "import carla; c = carla.Client('127.0.0.1', 2000); c.set_timeout(1); c.get_world()"; then
-    break
-  fi
-  sleep 2
-done
-if ! docker exec openadkit-e2e-plant python3 -c \
-  "import carla; c = carla.Client('127.0.0.1', 2000); c.set_timeout(1); c.get_world()"; then
+wait_for_carla() {
+  local py="${CARLA_PY:-/tmp/carla-venv/bin/python}"
+  echo "Waiting for CARLA RPC..."
+  for _ in $(seq 1 90); do
+    if [[ -x "$py" ]] && "$py" -c \
+      "import carla; c = carla.Client('127.0.0.1', 2000); c.set_timeout(2); c.get_world()" \
+      >/dev/null 2>&1; then
+      echo "CARLA ready"
+      return 0
+    fi
+    if docker exec openadkit-e2e-plant python3 -c \
+      "import carla; c = carla.Client('127.0.0.1', 2000); c.set_timeout(2); c.get_world()" \
+      >/dev/null 2>&1; then
+      echo "CARLA ready"
+      return 0
+    fi
+    sleep 2
+  done
   echo "CARLA did not become ready" >&2
-  exit 1
-fi
+  docker logs --tail 50 openadkit-e2e-carla >&2 || true
+  return 1
+}
+
+docker compose --env-file config.env --profile vp up -d carla
+wait_for_carla
+docker compose --env-file config.env --profile vp up -d
 
 SI_BIN="$ROOT/upstream/autoware-safety-island/build/freertos-posix/actuation_freertos"
 pkill -f "$SI_BIN" 2>/dev/null || true

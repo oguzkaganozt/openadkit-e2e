@@ -16,11 +16,13 @@ RUN_AFTER=false
 
 usage() {
   cat <<'EOF'
-Usage: ./deploy/bootstrap.sh --dds-interface <nic> [--run]
+Usage: ./deploy/build.sh --dds-interface <nic> [--run]
 
 Builds the pinned VisionPilot GPU/ROS2 image and FreeRTOS POSIX Safety Island,
 downloads the verified CARLA Python wheel, pulls runtime images, and builds the
-domain bridge. --run starts the end-to-end loop after bootstrap.
+domain bridge. --run starts the end-to-end loop after the build.
+
+On a fresh Ubuntu GPU host, run ./deploy/setup.sh once first.
 EOF
 }
 
@@ -55,6 +57,7 @@ done
 require_command() {
   command -v "$1" >/dev/null 2>&1 || {
     echo "Required command not found: $1" >&2
+    echo "On Ubuntu, run: $DEPLOY/setup.sh" >&2
     exit 1
   }
 }
@@ -81,6 +84,7 @@ ip link show "$DDS_INTERFACE" >/dev/null 2>&1 || {
 }
 docker info --format '{{json .Runtimes}}' | grep -q '"nvidia"' || {
   echo "Docker NVIDIA runtime is not installed" >&2
+  echo "On Ubuntu, run: $DEPLOY/setup.sh" >&2
   exit 1
 }
 
@@ -157,7 +161,7 @@ docker compose \
   --profile vp \
   config -q
 
-echo "Bootstrap complete."
+echo "Build complete."
 if $RUN_AFTER; then
   exec "$DEPLOY/run-loop.sh"
 fi
