@@ -4,6 +4,7 @@
 import math
 import threading
 import time
+from array import array
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import carla
@@ -317,7 +318,10 @@ class PlantBridge(Node):
             msg.encoding = "bgr8"
             msg.is_bigendian = 0
             msg.step = image.width * 3
-            msg.data = bgr.tobytes()
+            # A typed buffer bypasses the ROS generated setter's per-byte validation.
+            data = array("B")
+            data.frombytes(bgr.tobytes())
+            msg.data = data
             self.image_pub.publish(msg)
             with self._lock:
                 self._preview_frame = bgr
