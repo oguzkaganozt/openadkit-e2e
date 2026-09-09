@@ -73,6 +73,12 @@ SI publication: `/control/trajectory_follower/control_cmd` → plant_bridge → 
 
 An empty VP Path becomes a 0 m/s stop Trajectory. Plant drops stale `control_cmd` after 0.5 s.
 
+## Known issues
+
+### VisionPilot path instability at lane splits and merges
+
+In CARLA Town04, VisionPilot can briefly alternate between plausible lanes at splits and merges. This can shorten or abruptly change `/vehicle/lane_path`, make the vehicle weave, and cause Safety Island to report `MPC: failed due to getting MPC Data (too large yaw error)`. The path usually recovers without stopping, but if VisionPilot publishes an empty Path, the adapter intentionally sends a 0 m/s stop Trajectory and the vehicle can remain stopped. This is currently treated as a VisionPilot path-selection limitation; the deployment adapter does not mask it.
+
 ## Adapter
 
 `adapter/path_to_trajectory.py` converts VP `/vehicle/lane_path` (`base_link`) to `/planning/scenario_planning/trajectory` (map, ≤13 points, 25 m, ≤1200 B, 3 m/s).
