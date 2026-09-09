@@ -193,6 +193,14 @@ def downsample_indices(
     )
 
 
+def stop_trajectory(ego: Pose2D) -> list[TrajectoryPoint]:
+    ahead = transform_to_odom(Pose2D(0.5, 0.0, 0.0), ego)
+    return [
+        TrajectoryPoint(ego.x, ego.y, ego.yaw, 0.0, 0.0, acceleration_mps2=-1.0),
+        TrajectoryPoint(ahead.x, ahead.y, ahead.yaw, 0.0, 0.5, acceleration_mps2=-1.0),
+    ]
+
+
 def convert(
     path_points: list[Pose2D],
     ego: Pose2D,
@@ -205,7 +213,7 @@ def convert(
     byte_budget: int = SERIALIZED_BYTE_BUDGET,
 ) -> list[TrajectoryPoint] | None:
     if not path_points:
-        return None
+        return stop_trajectory(ego)
 
     world = [transform_to_odom(p, ego) for p in path_points]
     positions = [(p.x, p.y) for p in world]

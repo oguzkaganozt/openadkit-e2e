@@ -10,6 +10,7 @@ from path_to_trajectory import (
     Pose2D,
     convert,
     sample_quadratic_path,
+    stop_trajectory,
     serialized_size_bytes,
     target_speed_mps,
     transform_to_odom,
@@ -55,8 +56,21 @@ class QuadraticPathTests(unittest.TestCase):
 
 
 class ConvertTests(unittest.TestCase):
-    def test_empty_path_is_none(self):
-        self.assertIsNone(convert([], Pose2D(0.0, 0.0, 0.0)))
+    def test_empty_path_is_stop(self):
+        ego = Pose2D(10.0, 20.0, 0.0)
+        out = convert([], ego)
+        self.assertIsNotNone(out)
+        assert out is not None
+        self.assertEqual(len(out), 2)
+        self.assertEqual((out[0].x, out[0].y), (ego.x, ego.y))
+        self.assertAlmostEqual(out[0].longitudinal_velocity_mps, 0.0)
+        self.assertAlmostEqual(out[1].longitudinal_velocity_mps, 0.0)
+        self.assertGreater(out[1].x, out[0].x)
+
+    def test_stop_trajectory_has_two_points(self):
+        out = stop_trajectory(Pose2D(1.0, 2.0, math.pi / 2.0))
+        self.assertEqual(len(out), 2)
+        self.assertAlmostEqual(out[0].longitudinal_velocity_mps, 0.0)
 
     def test_straight_path_in_map(self):
         path = sample_quadratic_path(0.0, 0.0, 0.0, x_max_m=40.0)

@@ -32,6 +32,7 @@ SPEED_P_GAIN = 0.15
 ACCEL_THROTTLE_GAIN = 0.08
 BRAKE_DECEL_GAIN = 0.25
 MAX_THROTTLE = 0.5
+CONTROL_TIMEOUT_SEC = 0.5
 
 
 def carla_longitudinal(cmd_v: float, cmd_a: float, actual_v: float) -> tuple[float, float]:
@@ -113,6 +114,8 @@ class PlantBridge(Node):
         self._lock = threading.Lock()
         self._stop = False
         self._pending_ctrl = None
+        self._pending_ctrl_at = 0.0
+        self._ros_image = None
         self._sample = None
         self._actual_v = 0.0
         self._max_steer = None
@@ -145,6 +148,7 @@ class PlantBridge(Node):
         self.create_timer(0.05, self._on_timer)
         threading.Thread(target=self._http, daemon=True).start()
         threading.Thread(target=self._preview_loop, daemon=True).start()
+        threading.Thread(target=self._image_pub_loop, daemon=True).start()
         threading.Thread(target=self._carla_loop, daemon=True).start()
         self.get_logger().info("plant_bridge: CARLA RPC %s:%s http://0.0.0.0:8090/" % (host, port))
 
@@ -211,9 +215,9 @@ class PlantBridge(Node):
     def _on_timer(self):
         with self._lock:
             sample = self._sample
-            last_steer = self._last_steer
         if sample is None:
             return
+        last_steer = sample.get("steer", self._last_steer)
         qx, qy, qz, qw = _quat_from_yaw(sample["yaw"])
         stamp = self.get_clock().now().to_msg()
 
@@ -268,7 +272,10 @@ class PlantBridge(Node):
                     self._max_steer = max_steer if max_steer > 1e-6 else 1.0
                 with self._lock:
                     ctrl = self._pending_ctrl
+                    ctrl_at = self._pending_ctrl_at
                 if ctrl is not None:
+                    if time.monotonic() - ctrl_at > CONTROL_TIMEOUT_SEC:
+                        ctrl = carla.VehicleControl(throttle=0.0, brake=0.4, steer=0.0)
                     vehicle.apply_control(ctrl)
                 t = vehicle.get_transform()
                 vel = vehicle.get_velocity()
@@ -294,6 +301,7 @@ class PlantBridge(Node):
                     "ay": -sin_y * acc_x + cos_y * acc_y,
                     "az": float(acc.z),
                     "speed": math.hypot(vel.x, vel.y),
+                    "steer": self._measured_steer(vehicle),
                 }
                 with self._lock:
                     self._sample = sample
@@ -305,25 +313,20 @@ class PlantBridge(Node):
                 self.get_logger().warn("hero became unavailable: %s" % exc)
             time.sleep(0.05)
 
+    def _measured_steer(self, vehicle) -> float:
+        try:
+            deg = vehicle.get_wheel_steer_angle(carla.VehicleWheelLocation.FL_Wheel)
+            return -math.radians(float(deg))
+        except Exception:
+            return self._last_steer
+
     def _on_camera(self, image):
         try:
             arr = np.frombuffer(image.raw_data, dtype=np.uint8)
             arr = arr.reshape((image.height, image.width, 4))
             bgr = np.ascontiguousarray(arr[:, :, :3])
-            msg = Image()
-            msg.header.stamp = self.get_clock().now().to_msg()
-            msg.header.frame_id = "hero/main_cam"
-            msg.height = image.height
-            msg.width = image.width
-            msg.encoding = "bgr8"
-            msg.is_bigendian = 0
-            msg.step = image.width * 3
-            # A typed buffer bypasses the ROS generated setter's per-byte validation.
-            data = array("B")
-            data.frombytes(bgr.tobytes())
-            msg.data = data
-            self.image_pub.publish(msg)
             with self._lock:
+                self._ros_image = (image.width, image.height, bgr)
                 self._preview_frame = bgr
             self._camera_count += 1
             if self._camera_count == 1 or self._camera_count % 50 == 0:
@@ -334,6 +337,31 @@ class PlantBridge(Node):
                 )
         except Exception as exc:
             self.get_logger().error("camera: %s" % exc)
+
+    def _image_pub_loop(self):
+        while not self._stop:
+            with self._lock:
+                item = self._ros_image
+                self._ros_image = None
+            if item is None:
+                time.sleep(0.005)
+                continue
+            width, height, bgr = item
+            try:
+                msg = Image()
+                msg.header.stamp = self.get_clock().now().to_msg()
+                msg.header.frame_id = "hero/main_cam"
+                msg.height = height
+                msg.width = width
+                msg.encoding = "bgr8"
+                msg.is_bigendian = 0
+                msg.step = width * 3
+                data = array("B")
+                data.frombytes(bgr)
+                msg.data = data
+                self.image_pub.publish(msg)
+            except Exception as exc:
+                self.get_logger().error("image publish: %s" % exc)
 
     def _preview_loop(self):
         global _jpeg
@@ -378,6 +406,7 @@ class PlantBridge(Node):
         ctrl.manual_gear_shift = False
         with self._lock:
             self._pending_ctrl = ctrl
+            self._pending_ctrl_at = time.monotonic()
         self._control_count += 1
         if self._control_count == 1 or self._control_count % 100 == 0:
             pose_x = sample["x"] if sample else 0.0

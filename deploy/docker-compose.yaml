@@ -1,12 +1,11 @@
 # VP plans → adapter → SI follows → CARLA.
 # SI posix binary is host-side (see run-si.sh). VP steering_cmd is not wired to CARLA.
 #
-#   docker compose --env-file config.env up
-#   ./run-si.sh
+#   ./run-loop.sh
 
 services:
   carla:
-    image: ${CARLA_IMAGE:-carlasim/carla:0.9.16}
+    image: ${CARLA_IMAGE:-carlasim/carla:0.9.16@sha256:aaf1df22702780ece072069e23d03c4879b002ae028c79744b09c4c7ddbae953}
     container_name: openadkit-e2e-carla
     network_mode: host
     init: true
@@ -25,7 +24,7 @@ services:
     restart: on-failure
 
   adapter:
-    image: ${AUTOWARE_IMAGE:-ghcr.io/autowarefoundation/autoware:universe-20250207}
+    image: ${AUTOWARE_IMAGE:-ghcr.io/autowarefoundation/autoware:universe-20250207@sha256:5482c148addbd13c005e86452fc9c40502a8c87759f679b8b61d83943059ada7}
     container_name: openadkit-e2e-adapter
     network_mode: host
     ipc: host
@@ -42,7 +41,7 @@ services:
     restart: on-failure
 
   operation-mode:
-    image: ${AUTOWARE_IMAGE:-ghcr.io/autowarefoundation/autoware:universe-20250207}
+    image: ${AUTOWARE_IMAGE:-ghcr.io/autowarefoundation/autoware:universe-20250207@sha256:5482c148addbd13c005e86452fc9c40502a8c87759f679b8b61d83943059ada7}
     container_name: openadkit-e2e-operation-mode
     network_mode: host
     ipc: host
@@ -58,7 +57,7 @@ services:
     restart: on-failure
 
   plant:
-    image: ${AUTOWARE_IMAGE:-ghcr.io/autowarefoundation/autoware:universe-20250207}
+    image: ${AUTOWARE_IMAGE:-ghcr.io/autowarefoundation/autoware:universe-20250207@sha256:5482c148addbd13c005e86452fc9c40502a8c87759f679b8b61d83943059ada7}
     container_name: openadkit-e2e-plant
     network_mode: host
     ipc: host
@@ -112,6 +111,7 @@ services:
       - ./cyclonedds.xml:/autoware/cyclonedds.xml:ro
       - ./vision_pilot.conf:/usr/share/visionpilot/config/vision_pilot.conf:ro
       - ./vision_pilot.carla.conf:/usr/share/visionpilot/config/vision_pilot_ros2.conf:ro
+      - ./H.yaml:/usr/share/visionpilot/config/H.yaml:ro
     entrypoint: ["/bin/bash", "-lc"]
     command:
       - source /opt/ros/jazzy/setup.bash && exec /usr/bin/VisionPilot --no-window
@@ -133,7 +133,7 @@ services:
     restart: on-failure
 
   path-rx:
-    image: ${AUTOWARE_IMAGE:-ghcr.io/autowarefoundation/autoware:universe-20250207}
+    image: ${AUTOWARE_IMAGE:-ghcr.io/autowarefoundation/autoware:universe-20250207@sha256:5482c148addbd13c005e86452fc9c40502a8c87759f679b8b61d83943059ada7}
     container_name: openadkit-e2e-path-rx
     network_mode: host
     ipc: host
