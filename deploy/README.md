@@ -34,7 +34,7 @@ builds `visionpilot:gpu-ros2`, builds the Safety Island in its pinned devcontain
 pulls the runtime images, and builds the domain bridge. Pass `--run` to start the
 loop after a successful build.
 
-The closed drive loop is `run-loop.sh`. It starts CARLA, waits for RPC, then brings up `--profile vp` (VisionPilot + path relays), spawns ego, and starts one SI process. VP `steering_cmd` is not connected to CARLA.
+The closed drive loop is `run-loop.sh`. It starts the Compose stack: CARLA, spawn/tick, plant, VisionPilot, relays, adapter, domain bridge, and SI. VP `steering_cmd` is not connected to CARLA.
 
 `docker compose --env-file config.env up` without `--profile vp` is SI-only (no camera planning). For that path run `python3 deploy/nodes/fake_path.py` so the adapter still receives a Trajectory.
 

@@ -3,6 +3,8 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT/deploy"
+SI_BIN="$ROOT/upstream/autoware-safety-island/build/freertos-posix/actuation_freertos"
+COMPOSE=(docker compose --env-file config.env --profile vp)
 
 wait_for_log() {
   local container="$1"
@@ -43,37 +45,26 @@ wait_for_carla() {
   return 1
 }
 
-docker compose --env-file config.env --profile vp up -d carla
-wait_for_carla
-docker compose --env-file config.env --profile vp up -d
-
-SI_BIN="$ROOT/upstream/autoware-safety-island/build/freertos-posix/actuation_freertos"
-pkill -f "$SI_BIN" 2>/dev/null || true
-pkill -f "$ROOT/deploy/config_carla.py" 2>/dev/null || true
-for _ in $(seq 1 100); do
-  pgrep -f "$ROOT/deploy/config_carla.py" >/dev/null || break
-  sleep 0.1
-done
-if pgrep -f "$ROOT/deploy/config_carla.py" >/dev/null; then
-  echo "Existing CARLA spawn process did not stop" >&2
+if [[ ! -x "$SI_BIN" ]]; then
+  echo "SI binary missing: $SI_BIN" >&2
+  echo "Build first: $ROOT/deploy/build.sh --dds-interface <nic>" >&2
   exit 1
 fi
 
-: >/tmp/e2e-spawn.log
-nohup "$ROOT/deploy/run-spawn.sh" >/tmp/e2e-spawn.log 2>&1 </dev/null &
-for _ in $(seq 1 40); do
-  grep -q "Running" /tmp/e2e-spawn.log 2>/dev/null && break
-  sleep 2
-done
-grep -q "Running" /tmp/e2e-spawn.log
+pkill -f "$SI_BIN" 2>/dev/null || true
+pkill -f "$ROOT/deploy/config_carla.py" 2>/dev/null || true
 
+"${COMPOSE[@]}" up -d carla
+wait_for_carla
+"${COMPOSE[@]}" up -d --force-recreate spawn
 started_at="$(date --iso-8601=seconds)"
-docker compose --env-file config.env --profile vp restart visionpilot path-tx path-rx adapter plant
+wait_for_log openadkit-e2e-spawn "ego up" "CARLA spawn"
+"${COMPOSE[@]}" up -d
+"${COMPOSE[@]}" up -d --force-recreate si
+started_at="$(date --iso-8601=seconds)"
+"${COMPOSE[@]}" restart visionpilot path-tx path-rx adapter plant
 wait_for_log openadkit-e2e-path-tx "forwarded Path #" "VP Path"
 wait_for_log openadkit-e2e-path-rx "published relayed Path #" "UDP relay"
 wait_for_log openadkit-e2e-adapter "published Trajectory #" "adapter Trajectory"
-
-nohup "$ROOT/deploy/run-si.sh" >/tmp/si.log 2>&1 </dev/null &
 wait_for_log openadkit-e2e-plant "applied control #" "SI control"
 echo "SI started. Camera preview: http://127.0.0.1:8090/"
-echo "SI log: /tmp/si.log"

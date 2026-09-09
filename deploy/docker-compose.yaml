@@ -1,5 +1,5 @@
 # VP plans → adapter → SI follows → CARLA.
-# SI posix binary is host-side (see run-si.sh). VP steering_cmd is not wired to CARLA.
+# VP steering_cmd is not wired to CARLA.
 #
 #   ./run-loop.sh
 
@@ -146,4 +146,40 @@ services:
       bash -lc "source /opt/ros/$${ROS_DISTRO}/setup.bash &&
       source /opt/autoware/setup.bash &&
       python3 /opt/nodes/path_relay_rx.py"
+    restart: on-failure
+
+  spawn:
+    image: ${AUTOWARE_IMAGE:-ghcr.io/autowarefoundation/autoware:universe-20250207@sha256:5482c148addbd13c005e86452fc9c40502a8c87759f679b8b61d83943059ada7}
+    container_name: openadkit-e2e-spawn
+    network_mode: host
+    ipc: host
+    init: true
+    environment:
+      - SPAWN_INDEX=${SPAWN_INDEX:-184}
+    volumes:
+      - .:/opt/deploy:ro
+      - /tmp/carla-0.9.16-cp310-cp310-manylinux_2_31_x86_64.whl:/opt/carla-0.9.16-cp310-cp310-manylinux_2_31_x86_64.whl:ro
+    command: >
+      bash -lc "python3 -c 'import carla' 2>/dev/null ||
+      pip3 install /opt/carla-0.9.16-cp310-cp310-manylinux_2_31_x86_64.whl &&
+      python3 /opt/deploy/config_carla.py --host 127.0.0.1 --port 2000 -f /opt/deploy/carla916.json"
+    depends_on:
+      - carla
+    restart: on-failure
+
+  si:
+    image: ${AUTOWARE_IMAGE:-ghcr.io/autowarefoundation/autoware:universe-20250207@sha256:5482c148addbd13c005e86452fc9c40502a8c87759f679b8b61d83943059ada7}
+    container_name: openadkit-e2e-si
+    network_mode: host
+    ipc: host
+    init: true
+    volumes:
+      - ../upstream/autoware-safety-island/build/freertos-posix/actuation_freertos:/opt/si/actuation_freertos:ro
+    entrypoint: ["/bin/bash", "-lc"]
+    command:
+      - exec /opt/si/actuation_freertos
+    depends_on:
+      - domain-bridge
+      - plant
+      - adapter
     restart: on-failure
