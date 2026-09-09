@@ -12,6 +12,18 @@ CARLA (no --ros2)
 
 VP `steering_cmd` is not connected to CARLA.
 
+## Layout
+
+- `setup.sh`: one-time Ubuntu host setup.
+- `build.sh`: download and build runtime artifacts.
+- `run-loop.sh`: start the closed loop and check readiness.
+- `docker-compose.yaml`: runtime services and mounts.
+- `config.env`: shared image pins and ROS environment defaults. Keep it compatible with both Bash and Compose env-file syntax; `build.sh` sources it.
+- `config/`: CARLA rig, DDS bridge, and VisionPilot settings and calibration.
+- `nodes/`: runtime Python processes, including `spawn.py` for ego spawn and synchronous ticking.
+
+## Run
+
 ```bash
 # 0. once per Ubuntu GPU host: Docker, Compose, python3-venv, NVIDIA runtime
 ./deploy/setup.sh
@@ -33,6 +45,11 @@ Docker NVIDIA runtime. It verifies the official CARLA 0.9.16 CPython 3.10 wheel,
 builds `visionpilot:gpu-ros2`, builds the Safety Island in its pinned devcontainer,
 pulls the runtime images, and builds the domain bridge. Pass `--run` to start the
 loop after a successful build.
+
+CARLA, Autoware, and SI build image pins live only in `config.env`. Export
+`CARLA_IMAGE`, `AUTOWARE_IMAGE`, or `SI_BUILD_IMAGE` to override them for a build;
+use the same runtime overrides when starting the loop. CARLA image overrides must
+remain compatible with the verified 0.9.16 Python wheel.
 
 The closed drive loop is `run-loop.sh`. It starts the Compose stack: CARLA, spawn/tick, plant, VisionPilot, relays, adapter, domain bridge, and SI. VP `steering_cmd` is not connected to CARLA.
 

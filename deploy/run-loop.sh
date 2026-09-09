@@ -52,7 +52,7 @@ if [[ ! -x "$SI_BIN" ]]; then
 fi
 
 pkill -f "$SI_BIN" 2>/dev/null || true
-pkill -f "$ROOT/deploy/config_carla.py" 2>/dev/null || true
+pkill -f "$ROOT/deploy/nodes/spawn.py" 2>/dev/null || true
 
 "${COMPOSE[@]}" up -d carla
 wait_for_carla

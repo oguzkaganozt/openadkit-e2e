@@ -2,7 +2,7 @@
 """Spawn the VisionPilot ego + sensors in CARLA and follow it with the spectator.
 
 Pure CARLA PythonAPI — no ROS. Needs only the `carla` wheel matching this python
-(drive.sh stages it from $CARLA_ROOT). The plant bridge publishes ego telemetry as
+(deploy/build.sh downloads and verifies it). The plant bridge publishes ego telemetry as
 ROS 2 topics, so ROS never crosses the host/container boundary.
 
 The spawn point comes from the rig JSON ("spawn_index"); SPAWN_INDEX env overrides.
@@ -25,7 +25,7 @@ def _check_versions(client):
     if client_ver.split("-")[0] != server_ver.split("-")[0]:
         logging.warning(
             "CARLA PythonAPI %s != server %s — API calls may segfault; stage the matching "
-            "wheel from $CARLA_ROOT/PythonAPI/carla/dist (see drive.sh)",
+            "wheel with deploy/build.sh",
             client_ver,
             server_ver,
         )

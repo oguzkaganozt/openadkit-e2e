@@ -5,7 +5,7 @@
 
 services:
   carla:
-    image: ${CARLA_IMAGE:-carlasim/carla:0.9.16@sha256:aaf1df22702780ece072069e23d03c4879b002ae028c79744b09c4c7ddbae953}
+    image: ${CARLA_IMAGE:?Use --env-file config.env}
     container_name: openadkit-e2e-carla
     network_mode: host
     init: true
@@ -24,7 +24,7 @@ services:
     restart: on-failure
 
   adapter:
-    image: ${AUTOWARE_IMAGE:-ghcr.io/autowarefoundation/autoware:universe-20250207@sha256:5482c148addbd13c005e86452fc9c40502a8c87759f679b8b61d83943059ada7}
+    image: ${AUTOWARE_IMAGE:?Use --env-file config.env}
     container_name: openadkit-e2e-adapter
     network_mode: host
     ipc: host
@@ -32,7 +32,7 @@ services:
       - config.env
     volumes:
       - ../adapter:/opt/adapter:ro
-      - ./cyclonedds.xml:/autoware/cyclonedds.xml:ro
+      - ./config/cyclonedds.xml:/autoware/cyclonedds.xml:ro
     working_dir: /opt/adapter
     command: >
       bash -lc "source /opt/ros/$${ROS_DISTRO}/setup.bash &&
@@ -41,7 +41,7 @@ services:
     restart: on-failure
 
   operation-mode:
-    image: ${AUTOWARE_IMAGE:-ghcr.io/autowarefoundation/autoware:universe-20250207@sha256:5482c148addbd13c005e86452fc9c40502a8c87759f679b8b61d83943059ada7}
+    image: ${AUTOWARE_IMAGE:?Use --env-file config.env}
     container_name: openadkit-e2e-operation-mode
     network_mode: host
     ipc: host
@@ -49,7 +49,7 @@ services:
       - config.env
     volumes:
       - ./nodes:/opt/nodes:ro
-      - ./cyclonedds.xml:/autoware/cyclonedds.xml:ro
+      - ./config/cyclonedds.xml:/autoware/cyclonedds.xml:ro
     command: >
       bash -lc "source /opt/ros/$${ROS_DISTRO}/setup.bash &&
       source /opt/autoware/setup.bash &&
@@ -57,7 +57,7 @@ services:
     restart: on-failure
 
   plant:
-    image: ${AUTOWARE_IMAGE:-ghcr.io/autowarefoundation/autoware:universe-20250207@sha256:5482c148addbd13c005e86452fc9c40502a8c87759f679b8b61d83943059ada7}
+    image: ${AUTOWARE_IMAGE:?Use --env-file config.env}
     container_name: openadkit-e2e-plant
     network_mode: host
     ipc: host
@@ -65,7 +65,7 @@ services:
       - config.env
     volumes:
       - ./nodes:/opt/nodes:ro
-      - ./cyclonedds.xml:/autoware/cyclonedds.xml:ro
+      - ./config/cyclonedds.xml:/autoware/cyclonedds.xml:ro
       - /tmp/carla-0.9.16-cp310-cp310-manylinux_2_31_x86_64.whl:/opt/carla-0.9.16-cp310-cp310-manylinux_2_31_x86_64.whl:ro
     command: >
       bash -lc "source /opt/ros/$${ROS_DISTRO}/setup.bash &&
@@ -88,8 +88,8 @@ services:
     env_file:
       - config.env
     volumes:
-      - ./cyclonedds.xml:/autoware/cyclonedds.xml:ro
-      - ./bridge-config.yaml:/autoware/bridge-config.yaml:ro
+      - ./config/cyclonedds.xml:/autoware/cyclonedds.xml:ro
+      - ./config/bridge-config.yaml:/autoware/bridge-config.yaml:ro
     restart: on-failure
 
   visionpilot:
@@ -108,10 +108,10 @@ services:
       - ROS_DOMAIN_ID=1
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
-      - ./cyclonedds.xml:/autoware/cyclonedds.xml:ro
-      - ./vision_pilot.conf:/usr/share/visionpilot/config/vision_pilot.conf:ro
-      - ./vision_pilot.carla.conf:/usr/share/visionpilot/config/vision_pilot_ros2.conf:ro
-      - ./H.yaml:/usr/share/visionpilot/config/H.yaml:ro
+      - ./config/cyclonedds.xml:/autoware/cyclonedds.xml:ro
+      - ./config/vision_pilot.conf:/usr/share/visionpilot/config/vision_pilot.conf:ro
+      - ./config/vision_pilot.carla.conf:/usr/share/visionpilot/config/vision_pilot_ros2.conf:ro
+      - ./config/H.yaml:/usr/share/visionpilot/config/H.yaml:ro
     entrypoint: ["/bin/bash", "-lc"]
     command:
       - source /opt/ros/jazzy/setup.bash && exec /usr/bin/VisionPilot --no-window
@@ -133,7 +133,7 @@ services:
     restart: on-failure
 
   path-rx:
-    image: ${AUTOWARE_IMAGE:-ghcr.io/autowarefoundation/autoware:universe-20250207@sha256:5482c148addbd13c005e86452fc9c40502a8c87759f679b8b61d83943059ada7}
+    image: ${AUTOWARE_IMAGE:?Use --env-file config.env}
     container_name: openadkit-e2e-path-rx
     network_mode: host
     ipc: host
@@ -141,7 +141,7 @@ services:
       - config.env
     volumes:
       - ./nodes:/opt/nodes:ro
-      - ./cyclonedds.xml:/autoware/cyclonedds.xml:ro
+      - ./config/cyclonedds.xml:/autoware/cyclonedds.xml:ro
     command: >
       bash -lc "source /opt/ros/$${ROS_DISTRO}/setup.bash &&
       source /opt/autoware/setup.bash &&
@@ -149,7 +149,7 @@ services:
     restart: on-failure
 
   spawn:
-    image: ${AUTOWARE_IMAGE:-ghcr.io/autowarefoundation/autoware:universe-20250207@sha256:5482c148addbd13c005e86452fc9c40502a8c87759f679b8b61d83943059ada7}
+    image: ${AUTOWARE_IMAGE:?Use --env-file config.env}
     container_name: openadkit-e2e-spawn
     network_mode: host
     ipc: host
@@ -157,18 +157,19 @@ services:
     environment:
       - SPAWN_INDEX=${SPAWN_INDEX:-184}
     volumes:
-      - .:/opt/deploy:ro
+      - ./nodes/spawn.py:/opt/nodes/spawn.py:ro
+      - ./config/carla-rig.json:/opt/config/carla-rig.json:ro
       - /tmp/carla-0.9.16-cp310-cp310-manylinux_2_31_x86_64.whl:/opt/carla-0.9.16-cp310-cp310-manylinux_2_31_x86_64.whl:ro
     command: >
       bash -lc "python3 -c 'import carla' 2>/dev/null ||
       pip3 install /opt/carla-0.9.16-cp310-cp310-manylinux_2_31_x86_64.whl &&
-      python3 /opt/deploy/config_carla.py --host 127.0.0.1 --port 2000 -f /opt/deploy/carla916.json"
+      python3 /opt/nodes/spawn.py --host 127.0.0.1 --port 2000 -f /opt/config/carla-rig.json"
     depends_on:
       - carla
     restart: on-failure
 
   si:
-    image: ${AUTOWARE_IMAGE:-ghcr.io/autowarefoundation/autoware:universe-20250207@sha256:5482c148addbd13c005e86452fc9c40502a8c87759f679b8b61d83943059ada7}
+    image: ${AUTOWARE_IMAGE:?Use --env-file config.env}
     container_name: openadkit-e2e-si
     network_mode: host
     ipc: host

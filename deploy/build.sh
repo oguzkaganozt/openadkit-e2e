@@ -6,11 +6,13 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DEPLOY="$ROOT/deploy"
 VP="$ROOT/upstream/vision_pilot/VisionPilot"
 SI="$ROOT/upstream/autoware-safety-island"
+# shellcheck source=config.env
+source "$DEPLOY/config.env"
+COMPOSE=(docker compose --env-file "$DEPLOY/config.env" --file "$DEPLOY/docker-compose.yaml" --profile vp)
 
 CARLA_WHEEL="/tmp/carla-0.9.16-cp310-cp310-manylinux_2_31_x86_64.whl"
 CARLA_WHEEL_URL="${CARLA_WHEEL_URL:-https://files.pythonhosted.org/packages/67/be/cea470d588566ce532addc8c414c0ed53fe4d54af75b8eb7b092591279a5/carla-0.9.16-cp310-cp310-manylinux_2_31_x86_64.whl}"
 CARLA_WHEEL_SHA256="${CARLA_WHEEL_SHA256:-52b1f2fafb0655e25954f9f6d1e97c211a4da404217fd1d0094b4b7350737c95}"
-SI_BUILD_IMAGE="${SI_BUILD_IMAGE:-ghcr.io/autowarefoundation/autoware-safety-island:devcontainer@sha256:7b9810102736ea89a2504d945a59b968019380db44b4cf938839cedca7e6e615}"
 DDS_INTERFACE="${DDS_INTERFACE:-}"
 RUN_AFTER=false
 
@@ -69,8 +71,8 @@ done
 docker compose version >/dev/null
 nvidia-smi >/dev/null
 required_gib=2
-docker image inspect carlasim/carla:0.9.16@sha256:aaf1df22702780ece072069e23d03c4879b002ae028c79744b09c4c7ddbae953 >/dev/null 2>&1 || ((required_gib += 20))
-docker image inspect ghcr.io/autowarefoundation/autoware:universe-20250207@sha256:5482c148addbd13c005e86452fc9c40502a8c87759f679b8b61d83943059ada7 >/dev/null 2>&1 || ((required_gib += 15))
+docker image inspect "$CARLA_IMAGE" >/dev/null 2>&1 || ((required_gib += 20))
+docker image inspect "$AUTOWARE_IMAGE" >/dev/null 2>&1 || ((required_gib += 15))
 docker image inspect visionpilot:gpu-ros2 >/dev/null 2>&1 || ((required_gib += 15))
 docker image inspect "$SI_BUILD_IMAGE" >/dev/null 2>&1 || ((required_gib += 15))
 free_kib="$(df -Pk "$ROOT" | awk 'NR == 2 {print $4}')"
@@ -147,18 +149,9 @@ docker run --rm \
 test -x "$SI/build/freertos-posix/actuation_freertos"
 
 echo "Pulling runtime images and building the domain bridge..."
-docker pull carlasim/carla:0.9.16@sha256:aaf1df22702780ece072069e23d03c4879b002ae028c79744b09c4c7ddbae953
-docker pull ghcr.io/autowarefoundation/autoware:universe-20250207@sha256:5482c148addbd13c005e86452fc9c40502a8c87759f679b8b61d83943059ada7
-docker compose \
-  --env-file "$DEPLOY/config.env" \
-  --file "$DEPLOY/docker-compose.yaml" \
-  --profile vp \
-  build domain-bridge
-docker compose \
-  --env-file "$DEPLOY/config.env" \
-  --file "$DEPLOY/docker-compose.yaml" \
-  --profile vp \
-  config -q
+"${COMPOSE[@]}" pull carla adapter
+"${COMPOSE[@]}" build domain-bridge
+"${COMPOSE[@]}" config -q
 
 echo "Build complete."
 if $RUN_AFTER; then
