@@ -74,6 +74,8 @@ INT8 weights were slower than fp32 here (1.8 vs 2.5 Hz, reverted — no VNNI
 on this CPU); pinning to 8/25/28 cores showed parallelism saturates early,
 so thread tuning has nothing to give. Skipping the unused autospeed model
 (~1/3 of DNN cost) was deliberately left out to avoid touching the planner.
+All CPU figures above were measured on x86-64 (AMD EPYC); ARM CPU runs are
+untested and pending.
 
 ## Repository
 
