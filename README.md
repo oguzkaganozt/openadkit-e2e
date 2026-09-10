@@ -91,6 +91,9 @@ untested and pending.
 
 ## Next steps
 
+See the [VP–SI integration plan](docs/vp-si-integration-plan.md) for the staged
+implementation of VP command supervision, selectable SI control, and validated handover.
+
 ### ARM validation
 
 - Validate CPU inference on ARM hosts, which are currently untested; record
