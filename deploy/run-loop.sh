@@ -40,6 +40,11 @@ if [[ "$COMPUTE" == "cpu" ]]; then
   VISIONPILOT_CONF="${VISIONPILOT_CONF:-vision_pilot.cpu.conf}"
   CARLA_RUNTIME="${CARLA_RUNTIME:-runc}"
   export VISIONPILOT_IMAGE VISIONPILOT_RUNTIME VISIONPILOT_CONF CARLA_RUNTIME
+  if [[ "$CARLA_RUNTIME" == "runc" ]]; then
+    echo "CARLA requires an NVIDIA GPU and cannot run with runtime 'runc'." >&2
+    echo "Run on a GPU host, or point CARLA at one (CARLA_RUNTIME=nvidia)." >&2
+    exit 1
+  fi
   CARLA_WAIT_TRIES=240
 else
   CARLA_WAIT_TRIES=90
