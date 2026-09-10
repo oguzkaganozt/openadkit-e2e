@@ -66,6 +66,14 @@ started_at="$(date --iso-8601=seconds)"
 wait_for_log openadkit-e2e-adapter "vehicle/lane_path + /localization/kinematic_state" "adapter subscribed"
 wait_for_log openadkit-e2e-adapter "published Trajectory #" "VP Path + adapter Trajectory"
 wait_for_log openadkit-e2e-carla-bridge "applied control #" "SI control"
-preview_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
-preview_ip="${preview_ip:-127.0.0.1}"
-echo "SI started. Camera preview: http://${preview_ip}:8090/ (local: http://127.0.0.1:8090/)"
+# PREVIEW_HOST overrides the advertised address (e.g. a cloud floating IP,
+# which is not visible on any local interface). Otherwise list all local IPs.
+if [[ -n "${PREVIEW_HOST:-}" ]]; then
+  echo "SI started. Camera preview: http://${PREVIEW_HOST}:8090/"
+else
+  echo "SI started. Camera preview:"
+  hostname -I 2>/dev/null | tr ' ' '\n' | grep -v '^$' | while read -r ip; do
+    echo "  http://${ip}:8090/"
+  done
+  echo "  http://127.0.0.1:8090/ (local)"
+fi
