@@ -19,7 +19,7 @@ Run commands from the repository root unless a block starts with `cd`.
    ```
 
 The build initializes submodules, verifies and downloads the CARLA 0.9.16 wheel
-to `/tmp/`, builds VisionPilot GPU and Safety Island, pulls runtime images, and
+to `/tmp/`, builds VisionPilot and Safety Island, pulls runtime images, and
 builds the DDS domain bridge. Add `--run` to start the loop after building.
 
 ## Start, inspect, and stop
@@ -29,7 +29,7 @@ builds the DDS domain bridge. Add `--run` to start the loop after building.
 ```
 
 The script starts the full stack and checks that paths, trajectories, and control
-commands are flowing. View the camera at **<http://127.0.0.1:8090/>**.
+commands are flowing. View the camera at <http://127.0.0.1:8090/>.
 The final link advertises the public IP when auto-detectable
 (override with `PREVIEW_HOST=<ip>`, disable with `PREVIEW_AUTO=0`).
 
@@ -44,14 +44,14 @@ docker compose --env-file config.env --profile vp down
 
 ## Configuration
 
-| File | Settings |
-| --- | --- |
-| [`config.env`](config.env) | Image pins, container runtime, and ROS defaults |
-| [`config/vision_pilot.conf`](config/vision_pilot.conf) | VisionPilot inference provider |
-| [`config/vision_pilot.carla.conf`](config/vision_pilot.carla.conf), [`config/H.yaml`](config/H.yaml) | VisionPilot ROS topics and camera calibration |
-| [`config/carla-rig.json`](config/carla-rig.json) | Vehicle and camera rig |
-| [`config/bridge-config.yaml`](config/bridge-config.yaml), [`config/cyclonedds.xml`](config/cyclonedds.xml) | DDS topic routing and networking |
-| [`docker-compose.yaml`](docker-compose.yaml) | Services and mounts; Python processes live in [`nodes/`](nodes/) |
+| File                                                                                                            | Settings                                                        |
+| --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| [`config.env`](config.env)                                                                                      | Image pins, container runtime, and ROS defaults                 |
+| [`config/vision_pilot.conf`](config/vision_pilot.conf), [`config/vision_pilot.cpu.conf`](config/vision_pilot.cpu.conf) | VisionPilot inference provider (GPU / CPU)      |
+| [`config/vision_pilot.carla.conf`](config/vision_pilot.carla.conf), [`config/H.yaml`](config/H.yaml)            | VisionPilot ROS topics and camera calibration                   |
+| [`config/carla-rig.json`](config/carla-rig.json)                                                                | Vehicle and camera rig                                          |
+| [`config/bridge-config.yaml`](config/bridge-config.yaml), [`config/cyclonedds.xml`](config/cyclonedds.xml)      | DDS topic routing and networking                                |
+| [`docker-compose.yaml`](docker-compose.yaml)                                                                    | Services and mounts; Python processes live in [`nodes/`](nodes/) |
 
 Keep `config.env` compatible with both Bash and Compose; `build.sh` sources it.
 To override image pins, export `CARLA_IMAGE`, `AUTOWARE_IMAGE`, or `SI_BUILD_IMAGE`
@@ -76,7 +76,7 @@ and `config/vision_pilot.cpu.conf` (`engine.provider = cpu`); GPU mode uses
 Manual overrides (`VISIONPILOT_IMAGE`, `VISIONPILOT_RUNTIME`,
 `VISIONPILOT_CONF`, `CARLA_RUNTIME` exports) still win over the mode defaults.
 
-CPU path publication is slower than the 10 Hz camera (about 2 Hz measured on a
+CPU path publication is slower than the 10 Hz camera (about 2.5 Hz measured on a
 28-core host). Note: CARLA itself still requires an NVIDIA GPU — CPU mode only
 switches VisionPilot inference; fully GPU-less single-host operation is not
 supported (UE 4.26 is Vulkan-only and crashes on software GL).
@@ -91,20 +91,21 @@ VISIONPILOT_IMAGE=visionpilot:cpu-ros2 VISIONPILOT_RUNTIME=runc \
 VISIONPILOT_CONF=vision_pilot.cpu.conf CARLA_RUNTIME=nvidia ./deploy/run-loop.sh
 ```
 
-Verified: 10 Hz camera, ~2 Hz CPU planning, trajectory + SI control nominal.
+Verified: 10 Hz camera, ~2.5 Hz CPU planning, trajectory + SI control nominal.
 
 ## Runtime reference
 
 - **Adapter:** converts `/vehicle/lane_path` from `base_link` to a `map`
   trajectory, targeting 3 m/s with up to 13 points, a 25 m extent budget, and ≤1200 B.
 - **Stop behavior:** an empty path produces a 0 m/s trajectory. The CARLA bridge
-  drops control commands older than 0.5 s.
+  drops control commands older than 0.5 s, and stops publishing ego telemetry
+  when the latest CARLA sample is older than 0.2 s instead of republishing it.
 - **CARLA bridge:** uses Python RPC on port 2000 and maps Safety Island's velocity
   and acceleration commands to throttle using feedforward and speed error.
 - **Domains:** VisionPilot (ROS 2 Jazzy, FastDDS) and the adapter (ROS 2 Humble,
   CycloneDDS) use domain 1; Safety Island uses domain 2. The adapter subscribes
   to VisionPilot's path directly across the distro/RMW boundary (see known
-  limitations in the [main README](../README.md#known-limitation)); the DDS
+  limitations in the [main README](../README.md#known-limitations)); the DDS
   bridge connects domains. Discovery needs a multicast-capable interface
   (`build.sh --dds-interface`); on weak-multicast networks (e.g. Wi-Fi without
   multicast on `lo`) topic discovery can be slow or flaky.
@@ -113,13 +114,13 @@ Verified: 10 Hz camera, ~2 Hz CPU planning, trajectory + SI control nominal.
 
 Inputs are bridged from domain 1 to domain 2:
 
-| Topic | Type | Source |
-| --- | --- | --- |
-| `/planning/scenario_planning/trajectory` | `autoware_planning_msgs/msg/Trajectory` | Adapter |
-| `/localization/kinematic_state` | `nav_msgs/msg/Odometry` | CARLA bridge |
-| `/localization/acceleration` | `geometry_msgs/msg/AccelWithCovarianceStamped` | CARLA bridge |
-| `/vehicle/status/steering_status` | `autoware_vehicle_msgs/msg/SteeringReport` | CARLA bridge, measured steering |
-| `/system/operation_mode/state` | `autoware_adapi_v1_msgs/msg/OperationModeState` | `AUTONOMOUS` stub |
+| Topic                                    | Type                                        | Source                          |
+| ---------------------------------------- | ------------------------------------------- | ------------------------------- |
+| `/planning/scenario_planning/trajectory` | `autoware_planning_msgs/msg/Trajectory`     | Adapter                         |
+| `/localization/kinematic_state`          | `nav_msgs/msg/Odometry`                     | CARLA bridge                    |
+| `/localization/acceleration`             | `geometry_msgs/msg/AccelWithCovarianceStamped` | CARLA bridge                 |
+| `/vehicle/status/steering_status`        | `autoware_vehicle_msgs/msg/SteeringReport`  | CARLA bridge, measured steering |
+| `/system/operation_mode/state`           | `autoware_adapi_v1_msgs/msg/OperationModeState` | `AUTONOMOUS` stub           |
 
 Output: `/control/trajectory_follower/control_cmd` (`autoware_control_msgs/msg/Control`),
 bridged back to domain 1 and applied by the CARLA bridge.
