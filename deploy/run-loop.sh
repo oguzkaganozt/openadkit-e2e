@@ -1,10 +1,49 @@
 #!/usr/bin/env bash
 # One clean SI drive: start the scenario, wait for a trajectory, then start SI.
+# Compute mode: --cpu | --gpu, or COMPUTE=cpu|gpu (default: auto-detect).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT/deploy"
 SI_BIN="$ROOT/upstream/autoware-safety-island/build/freertos-posix/actuation_freertos"
 COMPOSE=(docker compose --env-file config.env --profile vp)
+
+COMPUTE="${COMPUTE:-auto}"
+while (($#)); do
+  case "$1" in
+    --cpu)
+      COMPUTE="cpu"
+      shift
+      ;;
+    --gpu)
+      COMPUTE="gpu"
+      shift
+      ;;
+    -h|--help)
+      echo "Usage: ./deploy/run-loop.sh [--cpu|--gpu]"
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+# shellcheck source=compute.sh
+. "$ROOT/deploy/compute.sh"
+resolve_compute
+echo "Compute mode: $COMPUTE"
+if [[ "$COMPUTE" == "cpu" ]]; then
+  # Defaults for a CPU-only host; explicit exports still win.
+  VISIONPILOT_IMAGE="${VISIONPILOT_IMAGE:-visionpilot:cpu-ros2}"
+  VISIONPILOT_RUNTIME="${VISIONPILOT_RUNTIME:-runc}"
+  VISIONPILOT_CONF="${VISIONPILOT_CONF:-vision_pilot.cpu.conf}"
+  CARLA_RUNTIME="${CARLA_RUNTIME:-runc}"
+  export VISIONPILOT_IMAGE VISIONPILOT_RUNTIME VISIONPILOT_CONF CARLA_RUNTIME
+  CARLA_WAIT_TRIES=240
+else
+  CARLA_WAIT_TRIES=90
+fi
 
 wait_for_log() {
   local container="$1"
@@ -25,7 +64,7 @@ wait_for_log() {
 wait_for_carla() {
   local py="${CARLA_PY:-/tmp/carla-venv/bin/python}"
   echo "Waiting for CARLA RPC..."
-  for _ in $(seq 1 90); do
+  for _ in $(seq 1 "$CARLA_WAIT_TRIES"); do
     if [[ -x "$py" ]] && "$py" -c \
       "import carla; c = carla.Client('127.0.0.1', 2000); c.set_timeout(2); c.get_world()" \
       >/dev/null 2>&1; then

@@ -18,11 +18,15 @@ RUN_AFTER=false
 
 usage() {
   cat <<'EOF'
-Usage: ./deploy/build.sh --dds-interface <nic> [--run]
+Usage: ./deploy/build.sh --dds-interface <nic> [--cpu|--gpu] [--run]
 
 Builds the pinned VisionPilot GPU/ROS2 image and FreeRTOS POSIX Safety Island,
 downloads the verified CARLA Python wheel, pulls runtime images, and builds the
 domain bridge. --run starts the end-to-end loop after the build.
+Compute mode can also be set with COMPUTE=cpu|gpu (default: auto, which uses
+the GPU when nvidia-smi works). CPU mode builds visionpilot:cpu-ros2 and
+expects the loop to run with VISIONPILOT_IMAGE=visionpilot:cpu-ros2
+VISIONPILOT_RUNTIME=runc.
 
 On a fresh Ubuntu GPU host, run ./deploy/setup.sh once first.
 EOF
@@ -34,6 +38,14 @@ while (($#)); do
       [[ $# -ge 2 ]] || { echo "$1 requires a value" >&2; exit 2; }
       DDS_INTERFACE="$2"
       shift 2
+      ;;
+    --cpu)
+      COMPUTE="cpu"
+      shift
+      ;;
+    --gpu)
+      COMPUTE="gpu"
+      shift
       ;;
     --run)
       RUN_AFTER=true
@@ -56,6 +68,13 @@ done
   exit 2
 }
 
+# shellcheck source=compute.sh
+. "$DEPLOY/compute.sh"
+resolve_compute
+export COMPUTE
+echo "Compute mode: $COMPUTE"
+VP_IMAGE="visionpilot:${COMPUTE}-ros2"
+
 require_command() {
   command -v "$1" >/dev/null 2>&1 || {
     echo "Required command not found: $1" >&2
@@ -64,16 +83,19 @@ require_command() {
   }
 }
 
-for command in awk curl docker git ip nvidia-smi python3 sha256sum; do
+for command in awk curl docker git ip python3 sha256sum; do
   require_command "$command"
 done
 
 docker compose version >/dev/null
-nvidia-smi >/dev/null
+if [[ "$COMPUTE" == "gpu" ]]; then
+  require_command nvidia-smi
+  nvidia-smi >/dev/null
+fi
 required_gib=2
 docker image inspect "$CARLA_IMAGE" >/dev/null 2>&1 || ((required_gib += 20))
 docker image inspect "$AUTOWARE_IMAGE" >/dev/null 2>&1 || ((required_gib += 15))
-docker image inspect visionpilot:gpu-ros2 >/dev/null 2>&1 || ((required_gib += 15))
+docker image inspect "$VP_IMAGE" >/dev/null 2>&1 || ((required_gib += 15))
 docker image inspect "$SI_BUILD_IMAGE" >/dev/null 2>&1 || ((required_gib += 15))
 free_kib="$(df -Pk "$ROOT" | awk 'NR == 2 {print $4}')"
 if ((free_kib < required_gib * 1024 * 1024)); then
@@ -84,11 +106,13 @@ ip link show "$DDS_INTERFACE" >/dev/null 2>&1 || {
   echo "DDS interface does not exist: $DDS_INTERFACE" >&2
   exit 1
 }
-docker info --format '{{json .Runtimes}}' | grep -q '"nvidia"' || {
-  echo "Docker NVIDIA runtime is not installed" >&2
-  echo "On Ubuntu, run: $DEPLOY/setup.sh" >&2
-  exit 1
-}
+if [[ "$COMPUTE" == "gpu" ]]; then
+  docker info --format '{{json .Runtimes}}' | grep -q '"nvidia"' || {
+    echo "Docker NVIDIA runtime is not installed" >&2
+    echo "On Ubuntu, run: $DEPLOY/setup.sh" >&2
+    exit 1
+  }
+fi
 
 echo "Initializing pinned submodules..."
 git -C "$ROOT" submodule update --init \
@@ -123,12 +147,12 @@ if [[ ! -x /tmp/carla-venv/bin/python ]]; then
 fi
 /tmp/carla-venv/bin/pip install --disable-pip-version-check "$CARLA_WHEEL"
 
-echo "Building visionpilot:gpu-ros2..."
+echo "Building $VP_IMAGE..."
 (
   cd "$VP/docker"
-  ./build.sh --gpu --ros2
+  ./build.sh "--$COMPUTE" --ros2
 )
-docker image inspect visionpilot:gpu-ros2 >/dev/null
+docker image inspect "$VP_IMAGE" >/dev/null
 
 echo "Building Safety Island for $DDS_INTERFACE..."
 docker pull "$SI_BUILD_IMAGE"
@@ -153,8 +177,14 @@ echo "Pulling runtime images and building the domain bridge..."
 "${COMPOSE[@]}" build domain-bridge
 "${COMPOSE[@]}" config -q
 
-echo "Build complete."
+echo "Build complete ($COMPUTE mode)."
 if $RUN_AFTER; then
   exec "$DEPLOY/run-loop.sh"
 fi
-echo "Start with: $DEPLOY/run-loop.sh"
+if [[ "$COMPUTE" == "cpu" ]]; then
+  echo "Start the CPU loop with:"
+  echo "  VISIONPILOT_IMAGE=visionpilot:cpu-ros2 VISIONPILOT_RUNTIME=runc $DEPLOY/run-loop.sh"
+  echo "(run-loop.sh applies these automatically when no GPU is detected)"
+else
+  echo "Start with: $DEPLOY/run-loop.sh"
+fi

@@ -8,7 +8,8 @@ See the [main README](../README.md#how-it-works) for the architecture.
 Run commands from the repository root unless a block starts with `cd`.
 
 1. Use Ubuntu x86-64 with a working NVIDIA driver (`nvidia-smi`), sudo, Git,
-   curl, and Python 3.10. The CARLA wheel requires CPython 3.10.
+   curl, and Python 3.10. The CARLA wheel requires CPython 3.10. For a GPU-less
+   host, skip the driver and use `--cpu` (see [compute mode](#compute-mode-gpu-or-cpu)).
 2. Run `./deploy/setup.sh` once to install Docker, Compose, Python venv support,
    and the NVIDIA container runtime. Log out and back in if prompted.
 3. Build with your multicast-capable network interface:
@@ -58,24 +59,26 @@ before building. Keep runtime overrides consistent when starting the loop.
 CARLA overrides must match the verified 0.9.16 Python wheel; do not enable
 `--ros2`, because native control is broken in this version.
 
-### VisionPilot CPU or GPU
+### Compute mode: GPU or CPU
 
-CARLA always needs NVIDIA. To change VisionPilot inference, match all three settings:
-
-| Setting | GPU (default) | CPU |
-| --- | --- | --- |
-| `VISIONPILOT_IMAGE` in `config.env` | `visionpilot:gpu-ros2` | `visionpilot:cpu-ros2` |
-| `VISIONPILOT_RUNTIME` in `config.env` | `nvidia` | `runc` |
-| `engine.provider` in `config/vision_pilot.conf` | `cuda` | `cpu` |
-
-The deployment build creates the GPU image. For CPU inference, build the CPU image:
+All three scripts share one decision, `COMPUTE=cpu|gpu` (default: `auto`,
+which uses the GPU when `nvidia-smi` works). Flags are shorthand:
 
 ```bash
-cd upstream/vision_pilot/VisionPilot/docker
-./build.sh --cpu --ros2
+./deploy/setup.sh --cpu
+./deploy/build.sh --dds-interface ens3 --cpu
+./deploy/run-loop.sh --cpu
 ```
 
-Then start the loop again. CPU path publication is slower than the 10 Hz camera.
+CPU mode builds `visionpilot:cpu-ros2` and runs it with the `runc` runtime
+and `config/vision_pilot.cpu.conf` (`engine.provider = cpu`); GPU mode uses
+`visionpilot:gpu-ros2`, the `nvidia` runtime, and `config/vision_pilot.conf`.
+Manual overrides (`VISIONPILOT_IMAGE`, `VISIONPILOT_RUNTIME`,
+`VISIONPILOT_CONF`, `CARLA_RUNTIME` exports) still win over the mode defaults.
+
+CPU path publication is slower than the 10 Hz camera. CARLA rendering on a
+GPU-less host falls back to software GL and is significantly slower; the loop
+still progresses because the scenario drives sim time, not wall-clock time.
 
 ## Runtime reference
 

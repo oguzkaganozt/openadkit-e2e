@@ -27,7 +27,9 @@ advances the simulation at a requested 20 Hz, with camera images at 10 Hz.
 ## Quick start
 
 Use an Ubuntu x86-64 host with a working NVIDIA driver, Git, curl, and Python 3.10
-with venv support. Run these commands from the repository root:
+with venv support (GPU-less hosts work too, slower — pass `--cpu` to the
+scripts, see the [deployment guide](deploy/README.md#compute-mode-gpu-or-cpu)).
+Run these commands from the repository root:
 
 ```bash
 ./deploy/setup.sh

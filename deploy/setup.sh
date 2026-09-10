@@ -4,15 +4,27 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: ./deploy/setup.sh
+Usage: ./deploy/setup.sh [--cpu|--gpu]
 
-Installs Docker Engine, Compose, python3-venv, and the NVIDIA container
-runtime. Requires Ubuntu, sudo, and a working NVIDIA driver (nvidia-smi).
+Installs Docker Engine, Compose, python3-venv, and (on GPU hosts) the NVIDIA
+container runtime. Mode can also be set with COMPUTE=cpu|gpu (default: auto,
+which uses the GPU when nvidia-smi works). Requires Ubuntu and sudo; GPU mode
+additionally requires a working NVIDIA driver (nvidia-smi).
 EOF
 }
 
-if (($#)); then
+COMPUTE="${COMPUTE:-auto}"
+
+while (($#)); do
   case "$1" in
+    --cpu)
+      COMPUTE="cpu"
+      shift
+      ;;
+    --gpu)
+      COMPUTE="gpu"
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -23,7 +35,11 @@ if (($#)); then
       exit 2
       ;;
   esac
-fi
+done
+
+# shellcheck source=compute.sh
+. "$(cd "$(dirname "$0")" && pwd)/compute.sh"
+resolve_compute
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -33,9 +49,11 @@ require_command() {
 }
 
 require_command curl
-require_command nvidia-smi
 require_command sudo
-nvidia-smi >/dev/null
+if [[ "$COMPUTE" == "gpu" ]]; then
+  require_command nvidia-smi
+  nvidia-smi >/dev/null
+fi
 
 # shellcheck source=/dev/null
 . /etc/os-release
@@ -68,15 +86,17 @@ fi
 printf 'deb [arch=%s signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu %s stable\n' \
   "$arch" "$codename" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
 
-if [[ ! -f /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg ]]; then
+if [[ "$COMPUTE" == "gpu" ]]; then
+  if [[ ! -f /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg ]]; then
+    curl --fail --silent --show-error --location \
+      https://nvidia.github.io/libnvidia-container/gpgkey \
+      | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+  fi
   curl --fail --silent --show-error --location \
-    https://nvidia.github.io/libnvidia-container/gpgkey \
-    | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+    https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+    | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
+    | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list >/dev/null
 fi
-curl --fail --silent --show-error --location \
-  https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
-  | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
-  | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list >/dev/null
 
 sudo apt-get update
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
@@ -84,21 +104,24 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
   docker-ce-cli \
   containerd.io \
   docker-buildx-plugin \
-  docker-compose-plugin \
-  nvidia-container-toolkit
-
-sudo nvidia-ctk runtime configure --runtime=docker
+  docker-compose-plugin
+if [[ "$COMPUTE" == "gpu" ]]; then
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nvidia-container-toolkit
+  sudo nvidia-ctk runtime configure --runtime=docker
+fi
 sudo systemctl enable --now docker
 sudo systemctl restart docker
 sudo usermod -aG docker "$USER"
 
 sudo docker compose version >/dev/null
-sudo docker info 2>/dev/null | grep -q nvidia || {
-  echo "Docker NVIDIA runtime is not installed" >&2
-  exit 1
-}
+if [[ "$COMPUTE" == "gpu" ]]; then
+  sudo docker info 2>/dev/null | grep -q nvidia || {
+    echo "Docker NVIDIA runtime is not installed" >&2
+    exit 1
+  }
+fi
 
-echo "Host setup complete."
+echo "Host setup complete ($COMPUTE mode)."
 if ! docker info >/dev/null 2>&1; then
   echo "Log out and back in so group 'docker' applies, then run ./deploy/build.sh"
   exit 0

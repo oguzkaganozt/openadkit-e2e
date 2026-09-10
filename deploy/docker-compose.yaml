@@ -10,7 +10,7 @@ services:
     network_mode: host
     init: true
     ipc: host
-    runtime: nvidia
+    runtime: ${CARLA_RUNTIME:-nvidia}
     environment:
       - DISPLAY=${DISPLAY}
       - NVIDIA_VISIBLE_DEVICES=all
@@ -106,7 +106,7 @@ services:
       - ROS_DOMAIN_ID=1
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
-      - ./config/vision_pilot.conf:/usr/share/visionpilot/config/vision_pilot.conf:ro
+      - ./config/${VISIONPILOT_CONF:-vision_pilot.conf}:/usr/share/visionpilot/config/vision_pilot.conf:ro
       - ./config/vision_pilot.carla.conf:/usr/share/visionpilot/config/vision_pilot_ros2.conf:ro
       - ./config/H.yaml:/usr/share/visionpilot/config/H.yaml:ro
     entrypoint: ["/bin/bash", "-lc"]
