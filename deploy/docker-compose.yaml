@@ -106,7 +106,6 @@ services:
       - ROS_DOMAIN_ID=1
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
-      - ./config/cyclonedds.xml:/autoware/cyclonedds.xml:ro
       - ./config/vision_pilot.conf:/usr/share/visionpilot/config/vision_pilot.conf:ro
       - ./config/vision_pilot.carla.conf:/usr/share/visionpilot/config/vision_pilot_ros2.conf:ro
       - ./config/H.yaml:/usr/share/visionpilot/config/H.yaml:ro

@@ -13,6 +13,7 @@ import json
 import logging
 import math
 import os
+import random
 import signal
 import time
 
@@ -122,8 +123,6 @@ def _follow_vehicle(world, vehicle, spectator):
     spectator.set_transform(carla.Transform(offset_location, rotation))
 
 
-import random
-
 def _setup_npc_traffic(world, traffic_manager, config, hero_spawn_index):
     bp_library = world.get_blueprint_library()
     map_ = world.get_map()
@@ -172,6 +171,7 @@ def main(args):
     world = None
     vehicle = None
     sensors = []
+    npc_vehicles = []
     original_settings = None
     traffic_manager = None
     signal.signal(signal.SIGTERM, signal.default_int_handler)
@@ -181,10 +181,7 @@ def main(args):
         client.set_timeout(60.0)
         _check_versions(client)
 
-        # if args.map and "Town06" not in client.get_world().get_map().name:
-        #     logging.info("Loading Town06 map")
         client.load_world("Town04")
-        # client.load_world("Town06")
 
         world = client.get_world()
 
@@ -208,8 +205,9 @@ def main(args):
         vehicle = _setup_vehicle(world, config)
         sensors = _setup_sensors(world, vehicle, config.get("sensors", []))
 
-        # Spawn additional vehicles
-        npc_vehicles = _setup_npc_traffic(world, traffic_manager, config, config.get("spawn_index", 0))
+        # Spawn additional vehicles, avoiding the hero's (possibly env-overridden) spawn.
+        hero_idx = int(os.environ.get("SPAWN_INDEX", config.get("spawn_index", 0)))
+        npc_vehicles = _setup_npc_traffic(world, traffic_manager, config, hero_idx)
 
         if args.autopilot:
             vehicle.set_autopilot(True)
@@ -252,6 +250,11 @@ def main(args):
                     logging.debug("Destroying sensor: {}".format(sensor.type_id))
                 sensor.destroy()
 
+            for npc in npc_vehicles:
+                if npc.is_alive:
+                    logging.debug("Destroying NPC: {}".format(npc.type_id))
+                npc.destroy()
+
             if vehicle:
                 if vehicle.is_alive:
                     logging.debug("Destroying vehicle: {}".format(vehicle.type_id))
@@ -288,7 +291,6 @@ if __name__ == "__main__":
         dest="autopilot",
         help="turn on autopilot for the vehicle",
     )
-    argparser.add_argument("-m", "--map", action="store_true", dest="map", help="load Town06 map")
 
     args = argparser.parse_args()
 

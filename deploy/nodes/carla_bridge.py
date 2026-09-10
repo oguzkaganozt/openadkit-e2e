@@ -181,6 +181,9 @@ class CarlaBridge(Node):
                     self._camera = actor
                     break
             if self._camera is None:
+                # Safety net when the scenario did not spawn the camera. Values must
+                # match deploy/config/carla-rig.json, converted to the CARLA frame
+                # the same way scenario.py does (y/pitch/yaw negated).
                 bp = self._world.get_blueprint_library().find("sensor.camera.rgb")
                 bp.set_attribute("image_size_x", "1920")
                 bp.set_attribute("image_size_y", "1280")
