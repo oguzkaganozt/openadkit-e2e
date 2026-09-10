@@ -66,10 +66,18 @@ started_at="$(date --iso-8601=seconds)"
 wait_for_log openadkit-e2e-adapter "vehicle/lane_path + /localization/kinematic_state" "adapter subscribed"
 wait_for_log openadkit-e2e-adapter "published Trajectory #" "VP Path + adapter Trajectory"
 wait_for_log openadkit-e2e-carla-bridge "applied control #" "SI control"
-# PREVIEW_HOST overrides the advertised address (e.g. a cloud floating IP,
-# which is not visible on any local interface). Otherwise list all local IPs.
-if [[ -n "${PREVIEW_HOST:-}" ]]; then
-  echo "SI started. Camera preview: http://${PREVIEW_HOST}:8090/"
+# PREVIEW_HOST wins; otherwise auto-detect the public IP (link-local EC2-style
+# metadata, then a public echo service), else fall back to local addresses.
+# Set PREVIEW_AUTO=0 to skip auto-detection entirely.
+preview_host="${PREVIEW_HOST:-}"
+if [[ -z "$preview_host" && "${PREVIEW_AUTO:-1}" != "0" ]]; then
+  preview_host="$(curl -s --max-time 2 http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+fi
+if [[ -z "$preview_host" && "${PREVIEW_AUTO:-1}" != "0" ]]; then
+  preview_host="$(curl -s --max-time 3 https://api.ipify.org 2>/dev/null | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+fi
+if [[ -n "$preview_host" ]]; then
+  echo "SI started. Camera preview: http://${preview_host}:8090/"
 else
   echo "SI started. Camera preview:"
   hostname -I 2>/dev/null | tr ' ' '\n' | grep -v '^$' | while read -r ip; do

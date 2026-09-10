@@ -29,6 +29,8 @@ builds the DDS domain bridge. Add `--run` to start the loop after building.
 
 The script starts the full stack and checks that paths, trajectories, and control
 commands are flowing. View the camera at **<http://127.0.0.1:8090/>**.
+The final link advertises the public IP when auto-detectable
+(override with `PREVIEW_HOST=<ip>`, disable with `PREVIEW_AUTO=0`).
 
 For service status, logs, and shutdown:
 
