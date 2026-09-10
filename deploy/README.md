@@ -77,14 +77,19 @@ Then start the loop again. CPU path publication is slower than the 10 Hz camera.
 
 ## Runtime reference
 
-- **Adapter:** converts `/vehicle/lane_path_relay` from `base_link` to a `map`
+- **Adapter:** converts `/vehicle/lane_path` from `base_link` to a `map`
   trajectory, targeting 3 m/s with up to 13 points, a 25 m extent budget, and ≤1200 B.
 - **Stop behavior:** an empty path produces a 0 m/s trajectory. The CARLA bridge
   drops control commands older than 0.5 s.
 - **CARLA bridge:** uses Python RPC on port 2000 and maps Safety Island's velocity
   and acceleration commands to throttle using feedforward and speed error.
-- **Domains:** VisionPilot and the adapter use domain 1; Safety Island uses domain 2.
-  The UDP relay transfers paths from Jazzy to Humble; the DDS bridge connects domains.
+- **Domains:** VisionPilot (ROS 2 Jazzy, FastDDS) and the adapter (ROS 2 Humble,
+  CycloneDDS) use domain 1; Safety Island uses domain 2. The adapter subscribes
+  to VisionPilot's path directly across the distro/RMW boundary (see known
+  limitations in the [main README](../README.md#known-limitation)); the DDS
+  bridge connects domains. Discovery needs a multicast-capable interface
+  (`build.sh --dds-interface`); on weak-multicast networks (e.g. Wi-Fi without
+  multicast on `lo`) topic discovery can be slow or flaky.
 
 ### Safety Island topics
 

@@ -62,9 +62,7 @@ wait_for_log openadkit-e2e-scenario "ego up" "CARLA scenario"
 "${COMPOSE[@]}" up -d
 "${COMPOSE[@]}" up -d --force-recreate si
 started_at="$(date --iso-8601=seconds)"
-"${COMPOSE[@]}" restart visionpilot path-tx path-rx adapter carla-bridge
-wait_for_log openadkit-e2e-path-tx "forwarded Path #" "VP Path"
-wait_for_log openadkit-e2e-path-rx "published relayed Path #" "UDP relay"
-wait_for_log openadkit-e2e-adapter "published Trajectory #" "adapter Trajectory"
+"${COMPOSE[@]}" restart visionpilot adapter carla-bridge
+wait_for_log openadkit-e2e-adapter "published Trajectory #" "VP Path + adapter Trajectory"
 wait_for_log openadkit-e2e-carla-bridge "applied control #" "SI control"
 echo "SI started. Camera preview: http://127.0.0.1:8090/"

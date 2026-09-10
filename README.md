@@ -12,8 +12,7 @@ and adapter that connects VisionPilot's lane path to Safety Island's trajectory 
 flowchart TD
     CARLA["CARLA 0.9.16"] <-->|Python RPC| Bridge["CARLA bridge"]
     Bridge -->|Camera images| VP["VisionPilot · ROS 2 Jazzy"]
-    VP -->|Lane path| Relay["UDP relay · Jazzy to Humble"]
-    Relay --> Adapter["Path-to-trajectory adapter"]
+    VP -->|Lane path| Adapter["Path-to-trajectory adapter"]
     Adapter -->|Trajectory| DDS["DDS domain bridge · 1 ↔ 2"]
     Bridge -->|Vehicle state| DDS
     DDS --> SI["Safety Island · FreeRTOS POSIX"]
@@ -49,6 +48,16 @@ In Town04, VisionPilot can switch between lanes at splits and merges, causing
 weaving or Safety Island `too large yaw error` messages. An empty path produces
 a stop trajectory, and the vehicle can remain stopped. The adapter does not
 correct this path-selection limitation.
+
+The adapter subscribes to VisionPilot's `/vehicle/lane_path` directly across
+the ROS distro (Jazzy to Humble) and RMW (FastDDS to CycloneDDS) boundary.
+This was verified empirically for `nav_msgs/Path` at 10 Hz, including a full
+closed loop, but ROS guarantees neither cross-distro nor cross-vendor
+communication. If the adapter stops publishing trajectories while VisionPilot
+is planning, suspect this boundary first (see also
+[rmw_fastrtps#797](https://github.com/ros2/rmw_fastrtps/issues/797)). Unifying
+both sides on CycloneDDS was tested and does not work (rmw 1.x vs 2.x string
+deserialization mismatch), so keep VisionPilot on its default FastDDS.
 
 ## Repository
 

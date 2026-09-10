@@ -37,7 +37,7 @@ services:
     command: >
       bash -lc "source /opt/ros/$${ROS_DISTRO}/setup.bash &&
       source /opt/autoware/setup.bash &&
-      python3 /opt/adapter/path_to_trajectory.py --ros-args -p input_path_topic:=/vehicle/lane_path_relay"
+      python3 /opt/adapter/path_to_trajectory.py"
     restart: on-failure
 
   operation-mode:
@@ -113,37 +113,6 @@ services:
     entrypoint: ["/bin/bash", "-lc"]
     command:
       - source /opt/ros/jazzy/setup.bash && exec /usr/bin/VisionPilot --no-window
-    restart: on-failure
-
-  path-tx:
-    profiles: ["vp"]
-    image: ${VISIONPILOT_IMAGE:?Use --env-file config.env}
-    container_name: openadkit-e2e-path-tx
-    network_mode: host
-    ipc: host
-    environment:
-      - ROS_DOMAIN_ID=1
-    volumes:
-      - ./nodes:/opt/nodes:ro
-    entrypoint: ["/bin/bash", "-lc"]
-    command:
-      - source /opt/ros/jazzy/setup.bash && python3 /opt/nodes/path_relay_tx.py
-    restart: on-failure
-
-  path-rx:
-    image: ${AUTOWARE_IMAGE:?Use --env-file config.env}
-    container_name: openadkit-e2e-path-rx
-    network_mode: host
-    ipc: host
-    env_file:
-      - config.env
-    volumes:
-      - ./nodes:/opt/nodes:ro
-      - ./config/cyclonedds.xml:/autoware/cyclonedds.xml:ro
-    command: >
-      bash -lc "source /opt/ros/$${ROS_DISTRO}/setup.bash &&
-      source /opt/autoware/setup.bash &&
-      python3 /opt/nodes/path_relay_rx.py"
     restart: on-failure
 
   scenario:

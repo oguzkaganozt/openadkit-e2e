@@ -17,7 +17,7 @@ class FakePath(Node):
             reliability=ReliabilityPolicy.RELIABLE,
             durability=DurabilityPolicy.VOLATILE,
         )
-        self.pub = self.create_publisher(Path, "/vehicle/lane_path_relay", qos)
+        self.pub = self.create_publisher(Path, "/vehicle/lane_path", qos)
         self.create_timer(0.1, self._tick)
 
     def _tick(self):
