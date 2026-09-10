@@ -1,237 +1,231 @@
 # VP–SI integration plan
 
-**Status:** Proposed implementation plan; runtime behavior is not yet implemented.
+**Status:** Proposed. Not implemented yet.
 
-## Objective
+## Idea in one line
 
-VisionPilot plans, the Safety Island drives. Intelligence comes from VP;
-every actuator command is computed on the SI side — either by the trajectory
-follower from a valid reference, or by the defined stopping response when no
-valid reference exists. Nothing invents motion.
+**VP → SI → GUARD → CARLA.**
 
-There is no controller selector, no primary-mode menu, and no automatic
-handover between drivers, because there is only one driver. Supervision means
-one gate authorizing or refusing that driver's output — never a second driver
-waiting to be picked.
+- VP produces intent (where to go, how fast, when to stop).
+- SI drives (follower computes control).
+- Guard authorizes (follower output or local fallback).
+- CARLA receives only approved output.
 
-## Current baseline
+One nominal driver: the follower. The fallback (MRM) is not a second
+driver, it is the emergency answer: stop and hold.
 
-The deployment converts VP's `/vehicle/lane_path` into the odometry frame,
-adds a nominal 3 m/s profile, and lets the SI trajectory follower drive the
-CARLA bridge. VP's own steering and acceleration commands are published but
-unused — so VP's lead-vehicle response and lateral behavior do not reach the
-wheels. Of VP's six intelligence products (lane geometry, lead estimate, speed
-and brake intent, warnings, steering computation, speed management), only lane
-geometry survives today.
+## Today
 
-Relevant code:
+- Adapter converts `/vehicle/lane_path` to odometry frame and adds a fake
+  `3 m/s` speed.
+- VP steering / acceleration are published but never used.
+- Result: only lane shape reaches the wheels. Speed intent is lost.
+
+Code:
 
 - [Path-to-trajectory adapter](../adapter/path_to_trajectory.py)
-- [CARLA bridge and actuator mapping](../deploy/nodes/carla_bridge.py)
+- [CARLA bridge](../deploy/nodes/carla_bridge.py)
 - [DDS routing](../deploy/config/bridge-config.yaml)
-- [Compose deployment](../deploy/docker-compose.yaml)
+- [Compose](../deploy/docker-compose.yaml)
 
-The SI software provides a trajectory follower only. The gate below requires
-SI-side development, not topic rewiring.
+SI today is only a follower (MPC + PID). Guard, watchdog, and fallback
+are new SI work. Follower logic does not change role.
 
-## Target architecture
+Problems that must be fixed first:
+
+1. VP lead-speed meaning is unclear (relative vs absolute).
+2. SI keeps using old input forever (no freshness check).
+3. Stop path has 2 points, MPC needs at least 3.
+4. Steering / accel messages have no timestamp or cycle ID.
+5. 33.3 m/s config vs 25 m path length does not fit physics.
+6. Bridge ignores message age, logs queued as applied, reuses last
+   steering on sensor loss.
+7. Anyone can publish the control topic (no publisher lock).
+
+## Target
 
 ```mermaid
 flowchart LR
-    CAM["Camera + ego state"] --> VP
-    subgraph D1["Domain 1 — Main compute"]
-        VP["VisionPilot\nperception + intent"]
-        AD["Reference adapter\nrich trajectory"]
-        VP -->|"lane path · speed intent · warnings"| AD
+    CAM["Camera + ego"] --> VP
+    subgraph D1["Domain 1"]
+        VP["VisionPilot"]
+        AD["Reference builder"]
+        SH["Shadow VP Control\nmeasure only"]
+        LOG["Compare log"]
+        VP --> AD
+        VP --> SH
+        SH --> LOG
     end
-    AD -->|"Trajectory\n(geometry + speed + stops)"| BR["DDS bridge 1→2"]
-    BR --> FOL
+    AD --> BR["DDS 1→2"]
+    BR --> ING
     subgraph SI["Domain 2 — Safety Island"]
-        FOL["Trajectory follower\nMPC + PID"]
-        SUP["Supervisor gate\nvalidity · age · limits"]
-        ENV["Environmental supervision\nindependent inputs"] -.-> SUP
-        FOL -->|"Control"| SUP
+        ING["Ingress check"]
+        FOL["Follower"]
+        SUP["Guard"]
+        MRM["Fallback"]
+        ENV["Independent eye"] -.-> SUP
+        ING --> FOL
+        FOL --> SUP
+        MRM --> SUP
     end
-    SUP -->|"Approved control\nor defined stop"| IF["Vehicle interface + output watchdog"]
+    SUP --> IF["Vehicle interface"]
     IF --> CARLA["CARLA"]
 ```
 
-| Component | Responsibility |
-| --- | --- |
-| VP | Perception and driving intent: lane geometry, speed and brake intent, lead estimate, warnings |
-| Reference adapter | Intent-to-contract translation: rich trajectory with consistent speed and stop profiles; reports invalid input, never invents policy |
-| SI follower | The only lateral and longitudinal control computation |
-| Supervisor gate | Authorizes or refuses follower output; enforces validity, age, and limits; triggers defined stop |
-| Environmental supervision | Independent-obstacle input to the gate; feeds the gate only, never the control path |
-| Vehicle interface | Physical-command conversion, last-mile timeout |
+| Part | Does | Does not do |
+| --- | --- | --- |
+| VP | Lane, speed horizon, stop intent. Timestamped. | Never sends actuator commands. |
+| Reference builder | Clean trajectory: shape + speed + stops. | Never invents speed or policy. |
+| Shadow | Only for comparison with SI, into a dedicated log/topic. | Never drives; bridge never subscribes to it. |
+| Ingress check | Drops old / bad input. | Does not drive. |
+| Follower | Normal driving. | Does not handle its own failure. |
+| Guard | Picks follower or fallback. Checks limits. | No crash-avoidance claim while blind. |
+| Fallback | Comfortable stop or emergency stop + hold. | Not a second normal driver. No pull-over. |
+| Independent eye | Extra obstacle input to guard only. | Never goes to follower. |
+| Vehicle interface | Converts commands, final timeout, reports what was really applied. | Does not guess missing data. |
 
-A host-side ROS guard may help early experiments but is not the target gate
-and establishes no isolation or certification claim.
+Rules:
 
-## Operating principle
+- Flow is one-way: VP → reference → follower → guard → vehicle.
+- No valid input = stop and hold. Never fake cruise, never replay.
+- No guessing VP speed from one acceleration sample. VP must export its
+  own speed horizon.
+- Blind guard = stop on bad data, not crash avoidance.
 
-- Intelligence flows one way: VP → reference → follower → gate → vehicle.
-- VP never signs an actuator message; the signature on every `Control` output
-  belongs to the SI side.
-- No valid reference means no driving: the fallback is a defined stopping
-  response, never an invented cruise speed and never replay of an old command.
-- VP's steering solver stays deliberately unused. Its input — the lane
-  polynomial — already reaches the wheels through the SI MPC, so running a
-  second solver would duplicate computation, not add information.
+## Phase 0 — Measure first
 
-## Phase 0 — Comparison and interface contract
+Build:
 
-**Goal:** make behavior preservation measurable before changing control.
+- Pin versions, maps, spawn points, sim settings, random seeds.
+- Run vanilla VP baseline with a throwaway shim on a dedicated shadow
+  topic/log that the bridge never subscribes to, then throw it away.
+- Fix VP lead-speed definition + tests.
+- Define message contract: units, signs, frames, clocks, restarts, QoS
+  (reliability, durability, depth per topic across FastDDS/CycloneDDS).
+  Signs matter (steer / yaw negation); velocity is mandatory because the
+  bridge consumes velocity + acceleration together.
+- Pick wire layout: 13 points are already ~1172 B, so choose fewer
+  points, bigger budget, or metadata on a side topic. Hard limits:
+  Domain-2 `MaxMessageSize 1400B` / `FragmentSize 1344B` — anything near
+  1400 B still fragments. Decision rule: maximize points that fit under
+  1200 B including metadata; if the horizon needs more, raise the budget
+  with measured fragmentation cost instead of silently crossing 1344 B.
+  Keep a per-topic domain + serialized-size table.
+- Use camera-time-aligned odometry; receiver clock for timeouts.
+- Add NPC cars, or limit tests to empty roads explicitly.
+- Set low-speed test limit. Derive the age timeout from measurement,
+  do not copy 0.5 s blindly.
 
-### Build
+Done when: baseline repeats, every command is traceable, wire layout
+is fixed.
 
-- Pin VP revision, models, config, vehicle, map, spawn points, and sim settings.
-- Record the vanilla VP–CARLA actuator mapping. Run the direct VP baseline on
-  the **current** bridge — via a throwaway VP→`Control` shim that is measured
-  and then discarded — and record the delta to the new reference path
-  separately; the baseline must not wait for Phase 1.
-- Define the reference contract: geometry, frame, acquisition time, validity
-  horizon, and physically consistent speed/acceleration profiles including
-  zero speed and stopping. Velocity is mandatory — the actuator mapping
-  consumes commanded velocity together with acceleration. Specify units,
-  signs, clocks, restarts, and **QoS (reliability, durability, depth)** for
-  every reference, control, and supervision topic across FastDDS/CycloneDDS
-  and the bridge.
-- Export VP intent with source timestamps and a shared cycle identifier.
-  Today's separate `Float64` messages carry neither, so arrival time cannot
-  establish age. Prefer VP's own speed horizon over reconstructing one from
-  instantaneous acceleration: a single acceleration sample does not reproduce
-  its lead-vehicle prediction across a horizon.
-- Add a lead-vehicle/NPC rig and scenario step (the current rig configures no
-  NPC vehicles), or scope lead-vehicle acceptance to empty traffic explicitly.
-- Set operating speeds and limits for latency, command age, tracking error,
-  braking, and actuator changes **before** measuring.
+Do not start Phase 1 until lead-speed is fixed.
 
-### Accept
+## Phase 1 — Rich path
 
-- Baseline reproducible, including curves and lead-vehicle braking.
-- Signs, units, saturation, and actuator response verified; every command
-  traceable from source cycle to application.
+Build:
 
-## Phase 1 — Rich reference
+- Adapter becomes a real reference builder: shape from lane path, speed
+  from VP horizon, stops from empty / invalid input.
+- Stop path must have at least 3 points with zero end speed and
+  physically consistent speed/accel shape (count alone is not a stop),
+  and cover cold start and valid → empty change.
+- Add ingress check now: age, sequence, bad-shape rejection, clear
+  old state. No endless driving on stale input.
+- Fault tests: late, dropped, reordered, restarted, bad shape.
 
-**Goal:** carry VP's intent — geometry, speed, braking, stopping — to the SI
-follower. This is the phase that answers the original objection.
+Done when: lead-car braking works through SI, curves work, restart
+from standstill works, every fault gives its defined answer.
 
-### Build
+Do not start Phase 2 until stops work and ingress closes stale driving.
 
-- Extend the adapter into a reference builder: lane geometry from
-  `/vehicle/lane_path`, speed intent from VP's acceleration output and vehicle
-  state, stop encoding from invalid/empty paths. Keep the 1200 B budget, the
-  25 m extent discipline, and the existing frame conventions; re-check
-  minimum-speed behavior, point budget, and usable horizon against the new
-  speed range including rest.
-- Prefer exporting VP's internally computed speed horizon where feasible.
-  Treat acceleration-to-profile reconstruction as an approximation requiring
-  validation against that horizon: one instantaneous acceleration value does
-  not reproduce VP's lead-vehicle prediction across a horizon.
-- Keep the empty-path stop trajectory. Losing VP intent must never fall back
-  to cruise: no reference means the defined stopping response.
-- Build the fault-injection harness first: delayed, dropped, reordered, and
-  restarted reference input; invalid geometry; supervisor-output loss.
+## Phase 2 — Guard + fallback
 
-### Accept
+Inside the guard:
 
-- Lead-vehicle slowdown and stopping from VP intent reproduced through SI
-  within Phase 0 limits; curves tracked; restart-from-rest demonstrated.
-- Each injected reference fault produces its specified response.
-- The report documents behavior differences against vanilla VP–CARLA driving
-  instead of claiming identical control; point density alone proves nothing.
+```text
+health → availability → pick one → limit check → output
+[fresh follower | comfortable | emergency]
+```
 
-## Phase 2 — Supervisor gate
+Who writes what:
 
-**Goal:** one gate authorizing or refusing follower output; no second driver.
+- Fresh: follower writes `Control`.
+- Comfortable: fallback writes a stop path, follower executes it.
+  Allowed only while follower is live (fresh output inside its timeout,
+  finite values, limits ok) and ego is healthy. If the fault is the
+  follower itself (stale / babbling / invalid), skip comfortable and go
+  straight to emergency.
+- Emergency: fallback writes `Control` directly.
+  Used when follower path is unusable or comfortable activation fails.
 
-### Build
+Build:
 
-- Add the gate to the SI runtime. The bridge consumes approved output only;
-  no other publisher may feed the actuator input.
-- Validate follower output and vehicle state: source age, finite values,
-  physical limits. Define per-violation responses (reject, bound, stop);
-  never clip steering and acceleration independently. Gate actuation state
-  with the same staleness rule as telemetry — mapping and state-loss braking
-  must not use stale speed or steering feedback.
-- Watchdog: enforce source timestamp/sequence and a maximum command age at the
-  actuation input, so stale-arriving output cannot pass as fresh; handle
-  fail-active/babbling output, not just silence. Adopt the existing 0.5 s
-  control timeout as the normative age bound and minimum publish rate.
-- Define stopping/stopped states, activation, and explicit re-enable rules. A
-  fallback must not assume failed measurements.
-- Inhibit actuation until a valid reference and a ready controller exist,
-  including at startup; the bridge takes approved output only.
-- Log requested/applied commands, source, reason, input ages, decision times;
-  count false interventions.
+- Guard + fallback in SI. Comfortable can only go down to emergency,
+  never back up while the fault stays.
+- Hold after stop. Explicit re-enable only. If ego itself failed,
+  stay held until ego is healthy + re-enable.
+- Bridge listens only to approved output. Enforcement, not just audit:
+  remove the raw follower `Control` input from Domain-1 routing in
+  `bridge-config.yaml` so the bridge cannot subscribe to it; startup check
+  + CI routing audit are the backstop. Sim scope only — real hardware needs
+  DDS security / ownership (separate spec).
+- Coupled limits only. Never clip steering and accel separately.
+- Check age with source stamp + sequence. Handle babbling, not only
+  silence. Gate actuation state with the same staleness rule as telemetry:
+  never drive mapping or braking on stale speed / steering.
+- No motion until valid input + ready controller, including startup.
+- Log wanted vs applied, reason, ages. Count false stops.
 
-### Accept
+Done when: normal driving passes through untouched, every fault
+(including babbling and guard-output loss) gives its defined answer,
+no hidden bypass in sim scope (routing + startup check + audit),
+hold / re-enable proven.
 
-- Without intervention, approved output matches follower output within
-  Phase 0 limits.
-- Each injected fault — including stale and babbling output — produces its
-  specified response, including watchdog actuation.
-- No bypass route exists; stop/hold/re-enable verified.
-- Limit checks alone claim no collision avoidance. The gate cannot validate
-  perception truth from the same chain that produced it, so no validity test
-  may treat same-chain signals as independent confirmation; that requires the
-  independent inputs of Phase 3.
+Still no crash-avoidance claim here. Same-chain checks cannot confirm
+perception truth.
 
-## Phase 3 — Environmental supervision
+## Phase 3 — Independent eye
 
-**Goal:** give the gate an independent eye. This is a separate capability,
-not a byproduct of controller choice.
+Start early as a spike during Phase 2, finish after the guard path works.
 
-1. Define scenarios and data: ego state, obstacle position/motion, corridor,
-   uncertainty, observation age.
-2. Develop against CARLA ground truth, but keep privileged-information results
-   separate from VP-only comparisons.
-3. VP CIPO and its derived warnings share one dependency chain — not
-   independent channels. Add them only through a documented interface, and
-   never treat them as confirming each other.
-4. Count missed interventions **and** unnecessary braking; state what the
-   monitor covers and what it does not.
+- Define cases: ego, obstacle motion, corridor, uncertainty, data age.
+- Train on CARLA truth, but report privileged results separately.
+- CIPO and warnings are one chain, not two independent votes.
+- Count misses and false brakes. Write what is covered and what is not.
+- Same camera / same host is not independence.
 
-Build this after the approved-output path exists. Stopping for an obstacle is
-not path planning around it; this plan adds no lateral avoidance planner —
-neither does VP itself.
+Needed for any crash-avoidance claim. Not needed for plain fail-stop.
+No sideways avoidance planner in this plan. VP has none either.
 
-## Later, only if justified
+## Later
 
-- VP-side exports (warnings, CIPO) through documented interfaces, in the VP fork.
-- Town parameterization and NPC scenarios (see Generalization in the main
-  README). Neither changes the architecture above.
+- Extra VP exports (warnings, CIPO, horizon) in the VP fork.
+- More towns / NPC cases.
+- VP as backup driver only with independent sensing, arbitration, and
+  bumpless handover proof. Until then VP Control stays shadow.
 
-## Implementation areas
+## Who builds what
 
 | Area | Work |
 | --- | --- |
-| VP fork | Timestamped coherent intent publication; reference/perception exports |
-| SI fork | Gate path, fallback, readiness; follower unchanged in role |
-| `adapter/` | Rich-reference conversion and tests |
-| `deploy/nodes/carla_bridge.py` | Common contract, approved-output input, watchdog, applied-command feedback |
-| `deploy/config/bridge-config.yaml` | Reference/control routing with explicit domains and `from_domain`/`to_domain` |
-| Compose, build/start scripts | Message support, startup readiness, submodule pins |
-| Scenario and tooling | Reproducible baseline, fault injection, comparison reports |
+| VP fork | Fix lead-speed, timestamped horizon export |
+| SI fork | Ingress, guard, fallback; follower role unchanged |
+| `adapter/` | Rich reference, valid stops, tests |
+| `carla_bridge.py` | Approved input only, watchdog, real applied feedback |
+| `bridge-config.yaml` | Domains, routing, publisher lock |
+| Compose / scripts | Startup block until ready, pinned versions |
+| Tests | Baseline, fault injection, shadow comparison, miss + false counts |
 
-Fork changes stay in their forks; this repo pins revisions. Hard constraints
-for every newly bridged message: the 1200 B adapter budget and domain-2
-`MaxMessageSize 1400B` / `FragmentSize 1344B` — state each topic's domain and
-keep serialized sizes inside budget.
+Fork changes stay in their forks; this repo only pins revisions.
 
-## Completion criteria
+## Done when
 
-1. **Preservation:** intent-carrying driving matches the VP baseline within
-   stated limits; the fixed 3 m/s cruise is gone.
-2. **Supervision:** selected invalid-command and communication failures get
-   documented, bounded responses.
-3. **Alternative perception for the gate:** environmental supervision covers
-   its specified scenarios with counted misses and false interventions.
-4. **Known limits:** behavior differences, latencies, and availability costs
-   (including SI-fault stops) are measured and stated.
+1. Fake 3 m/s cruise is gone; intent driving matches baseline in limits.
+2. Bad input / lost comms give bounded stops, false stops counted.
+3. Independent eye covers its stated cases, misses + false brakes counted.
+4. Differences, delays, and stop costs measured. Age limit measured,
+   not copied.
 
-None of this establishes certification, hardware isolation, or general driving
-safety. The deliverable is a measured integration with explicit
-responsibilities, supported scenarios, and known limits.
+This gives no certificate, no hardware isolation, no general safety.
+It gives a measured integration with clear duties and known limits.
