@@ -27,8 +27,8 @@ advances the simulation at a requested 20 Hz, with camera images at 10 Hz.
 ## Quick start
 
 Use an Ubuntu x86-64 host with a working NVIDIA driver, Git, curl, and Python 3.10
-with venv support (GPU-less hosts work too, slower — pass `--cpu` to the
-scripts, see the [deployment guide](deploy/README.md#compute-mode-gpu-or-cpu)).
+with venv support (see the [deployment guide](deploy/README.md#compute-mode-gpu-or-cpu)
+for CPU inference notes; CARLA itself still requires an NVIDIA GPU).
 Run these commands from the repository root:
 
 ```bash
@@ -60,6 +60,20 @@ is planning, suspect this boundary first (see also
 [rmw_fastrtps#797](https://github.com/ros2/rmw_fastrtps/issues/797)). Unifying
 both sides on CycloneDDS was tested and does not work (rmw 1.x vs 2.x string
 deserialization mismatch), so keep VisionPilot on its default FastDDS.
+
+CARLA requires an NVIDIA GPU; there is no supported CPU rendering path.
+UE 4.26 is Vulkan-only (`-opengl` is ignored), the bundled Mesa 21.2 lavapipe
+segfaults during init, host-mounted Mesa 23 cannot load (glibc 2.32+ vs image
+2.31), and `-no-rendering` crashes the same way at startup. Even if it booted,
+no-rendering returns empty camera data, which would blind the planner.
+
+CPU inference tops out around 2.5 Hz on a 28-core EPYC (vs 10 Hz on GPU);
+the loop stays correct because the scenario drives sim time. Measured,
+in order: ORT graph optimizations on CPU sessions gained ~20% (kept);
+INT8 weights were slower than fp32 here (1.8 vs 2.5 Hz, reverted — no VNNI
+on this CPU); pinning to 8/25/28 cores showed parallelism saturates early,
+so thread tuning has nothing to give. Skipping the unused autospeed model
+(~1/3 of DNN cost) was deliberately left out to avoid touching the planner.
 
 ## Repository
 
