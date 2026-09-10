@@ -76,9 +76,22 @@ and `config/vision_pilot.cpu.conf` (`engine.provider = cpu`); GPU mode uses
 Manual overrides (`VISIONPILOT_IMAGE`, `VISIONPILOT_RUNTIME`,
 `VISIONPILOT_CONF`, `CARLA_RUNTIME` exports) still win over the mode defaults.
 
-CPU path publication is slower than the 10 Hz camera. CARLA rendering on a
-GPU-less host falls back to software GL and is significantly slower; the loop
-still progresses because the scenario drives sim time, not wall-clock time.
+CPU path publication is slower than the 10 Hz camera (about 2 Hz measured on a
+28-core host). Note: CARLA itself still requires an NVIDIA GPU — CPU mode only
+switches VisionPilot inference; fully GPU-less single-host operation is not
+supported (UE 4.26 is Vulkan-only and crashes on software GL).
+
+### Mixed mode: GPU CARLA + CPU VisionPilot
+
+On a GPU host, build once for CPU and pin CARLA to NVIDIA at run time:
+
+```bash
+./deploy/build.sh --dds-interface ens3 --cpu
+VISIONPILOT_IMAGE=visionpilot:cpu-ros2 VISIONPILOT_RUNTIME=runc \
+VISIONPILOT_CONF=vision_pilot.cpu.conf CARLA_RUNTIME=nvidia ./deploy/run-loop.sh
+```
+
+Verified: 10 Hz camera, ~2 Hz CPU planning, trajectory + SI control nominal.
 
 ## Runtime reference
 
