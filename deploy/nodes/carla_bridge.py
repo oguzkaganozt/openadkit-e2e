@@ -33,6 +33,7 @@ ACCEL_THROTTLE_GAIN = 0.08
 BRAKE_DECEL_GAIN = 0.25
 MAX_THROTTLE = 0.5
 CONTROL_TIMEOUT_SEC = 0.5
+STALE_SAMPLE_TIMEOUT_SEC = 0.2
 
 
 def carla_longitudinal(cmd_v: float, cmd_a: float, actual_v: float) -> tuple[float, float]:
@@ -220,6 +221,8 @@ class CarlaBridge(Node):
             sample = self._sample
         if sample is None:
             return
+        if time.monotonic() - sample.get("t_monotonic", 0.0) > STALE_SAMPLE_TIMEOUT_SEC:
+            return
         last_steer = sample.get("steer", self._last_steer)
         qx, qy, qz, qw = _quat_from_yaw(sample["yaw"])
         stamp = self.get_clock().now().to_msg()
@@ -292,6 +295,7 @@ class CarlaBridge(Node):
                 acc_y = float(-acc.y)
                 actual_v = cos_y * vel_x + sin_y * vel_y
                 sample = {
+                    "t_monotonic": time.monotonic(),
                     "x": float(t.location.x),
                     "y": float(-t.location.y),
                     "z": float(t.location.z),
