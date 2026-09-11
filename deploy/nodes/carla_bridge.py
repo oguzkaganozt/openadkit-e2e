@@ -391,7 +391,9 @@ class CarlaBridge(Node):
                 frame = self._preview_frame
                 self._preview_frame = None
             if frame is None:
-                time.sleep(0.02)
+                # 10 Hz preview: the tight 50 Hz loop starved the 1 Hz
+                # evidence snapshots of CPU (observed ~0.1 Hz snaps).
+                time.sleep(0.1)
                 continue
             try:
                 small = cv2.resize(frame, (640, 427))
