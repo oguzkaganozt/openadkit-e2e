@@ -295,7 +295,9 @@ def convert(
             )
         )
         if i + 1 < len(lengths):
-            t += ds_next / max(speed, 0.1) if speed > 0.05 else 0.0
+            # Advance along the time horizon even from rest so later points
+            # pick up planned acceleration (horizon[0] is current ego speed).
+            t += ds_next / max(speed, 0.5)
     return out
 
 

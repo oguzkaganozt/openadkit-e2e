@@ -119,6 +119,15 @@ class ConvertTests(unittest.TestCase):
         self.assertEqual(len(out), 3)
         self.assertAlmostEqual(out[0].longitudinal_velocity_mps, 0.0)
 
+    def test_standstill_horizon_speeds_up_along_path(self):
+        path = sample_quadratic_path(0.0, 0.0, 0.0, x_max_m=20.0)
+        horizon = [1.5 * 0.05 * i for i in range(20)]
+        out = convert(path, Pose2D(0.0, 0.0, 0.0), speed_horizon=horizon)
+        self.assertIsNotNone(out)
+        assert out is not None
+        self.assertAlmostEqual(out[0].longitudinal_velocity_mps, 0.0, places=2)
+        self.assertGreater(out[-1].longitudinal_velocity_mps, 0.5)
+
     def test_horizon_slows_along_path(self):
         path = sample_quadratic_path(0.0, 0.0, 0.0, x_max_m=20.0)
         horizon = [5.0 - 0.2 * i for i in range(20)]
