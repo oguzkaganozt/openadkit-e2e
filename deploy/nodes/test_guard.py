@@ -219,7 +219,10 @@ class GuardTests(unittest.TestCase):
 
     def test_fresh_entry_resets_babble_baseline(self):
         # A STOPPED→DRIVE step across a hold boundary must not read as
-        # babbling: entry into FRESH clears the jump baseline.
+        # babbling: the first arrival after FRESH entry is adopted as
+        # the baseline without comparing, while presence data is kept
+        # (no no-follower-yet before that arrival: the startup race
+        # that deadlocked a live run in HOLD).
         g = GuardPolicy()
         live(g, 1000.0, v=0.0)
         g.step(1010.0)
@@ -234,13 +237,23 @@ class GuardTests(unittest.TestCase):
         live(g, 2000.0, v=0.0)
         out = g.step(2010.0, re_enable=True)
         self.assertEqual(out.state, FRESH)
-        # First DRIVE command with a large steer step: no stale
-        # baseline to compare against, so no babble trip.
+        # Timer tick before the next arrival: data kept, stays FRESH.
+        out = g.step(2015.0)
+        self.assertEqual(out.state, FRESH)
+        # First DRIVE command with a large steer step: adopted as the
+        # baseline, so no babble trip.
         g.on_follower(cmd(2020.0, v=2.0, s=0.5))
         g.on_traj(traj(2020.0, v=2.0), 2020.0)
         g.on_odom(ego(2020.0, v=0.5))
         out = g.step(2020.0)
         self.assertEqual(out.state, FRESH)
+        # The regime after the baseline still trips on real jumps.
+        g.on_follower(cmd(2030.0, v=2.0, s=-0.5))
+        g.on_traj(traj(2030.0, v=2.0), 2030.0)
+        g.on_odom(ego(2030.0, v=0.5))
+        out = g.step(2030.0)
+        self.assertEqual(out.state, EMERGENCY)
+        self.assertIn("babbling", out.reason)
 
     def test_brake_cmd_freezes_last_steer(self):
         g = GuardPolicy()

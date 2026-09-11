@@ -117,6 +117,7 @@ class GuardPolicy:
     def __init__(self) -> None:
         self.state = INIT
         self.reason = "startup"
+        self._skip_jump_once = False
         self._last_follower: FollowerCmd | None = None
         self._prev_follower: FollowerCmd | None = None
         self._follower_at = 0.0
@@ -132,7 +133,14 @@ class GuardPolicy:
 
     # -- inputs ---------------------------------------------------------
     def on_follower(self, cmd: FollowerCmd) -> None:
-        self._prev_follower = self._last_follower
+        if self._skip_jump_once:
+            # Post-hold baseline: adopt without comparing (a STOPPED→
+            # DRIVE step across the boundary is SI dynamics, not
+            # babbling). Data stays present so freshness never faults.
+            self._skip_jump_once = False
+            self._prev_follower = cmd
+        else:
+            self._prev_follower = self._last_follower
         self._last_follower = cmd
         self._follower_at = cmd.stamp_ms
         self._arrival_times.append(cmd.stamp_ms)
@@ -285,16 +293,14 @@ class GuardPolicy:
         self.reason = reason
         self._clear_count = 0
         if state == FRESH:
-            # Fresh baseline: the jump/babble detectors only mean
-            # something between consecutive commands of one continuous
-            # regime. A STOPPED→DRIVE step across a hold boundary is SI
-            # dynamics, not babbling (proven live: it re-tripped a
-            # legitimate release with a stale baseline). Both are
-            # cleared: the next arrival sets _last with no _prev to
-            # compare against, and the one after compares within the
-            # new regime.
-            self._prev_follower = None
-            self._last_follower = None
+            # Fresh baseline: the jump detector compares only within
+            # one continuous regime. The next arrival is adopted as the
+            # baseline without comparing (a STOPPED→DRIVE step across a
+            # hold boundary is SI dynamics, not babbling — proven live),
+            # while presence/freshness data is kept so no fault can
+            # fire before that arrival (proven live: clearing the data
+            # deadlocked a startup in HOLD via no-follower-yet).
+            self._skip_jump_once = True
             self._arrival_times = []
         if state in (COMFORTABLE, EMERGENCY):
             self._entries += 1
