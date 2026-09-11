@@ -322,6 +322,9 @@ def main(args):
         TARGET_HZ = 20.0
         TARGET_PERIOD = 1.0 / TARGET_HZ
 
+        cmap = world.get_map()
+        prev_loc = None
+        dist_m = 0.0
         tick = 0
         while True:
             loop_start = time.time()
@@ -363,6 +366,53 @@ def main(args):
                     math.hypot(hv.x, hv.y),
                     math.hypot(lv.x, lv.y),
                 )
+            # 1 Hz hero pose + lane tracking evidence (A/B scoring, curves).
+            # CARLA frame; lane_off is signed lateral offset from the lane
+            # center waypoint, curve is lane yaw rate (rad/m).
+            if tick % 20 == 0:
+                try:
+                    hl0 = vehicle.get_location()
+                    hv0 = vehicle.get_velocity()
+                    if prev_loc is not None:
+                        dist_m += math.hypot(
+                            hl0.x - prev_loc.x, hl0.y - prev_loc.y
+                        )
+                    prev_loc = hl0
+                    wp = cmap.get_waypoint(
+                        hl0,
+                        project_to_road=True,
+                        lane_type=carla.LaneType.Driving,
+                    )
+                    if wp is not None:
+                        wyaw = math.radians(wp.transform.rotation.yaw)
+                        dx = hl0.x - wp.transform.location.x
+                        dy = hl0.y - wp.transform.location.y
+                        lane_off = -math.sin(wyaw) * dx + math.cos(wyaw) * dy
+                        nxt = wp.next(2.0)
+                        if nxt:
+                            nyaw = math.radians(nxt[0].transform.rotation.yaw)
+                            dyaw = (
+                                (nyaw - wyaw + math.pi) % (2.0 * math.pi)
+                            ) - math.pi
+                            curve = dyaw / 2.0
+                        else:
+                            curve = 0.0
+                    else:
+                        lane_off, curve = float("nan"), float("nan")
+                    logging.info(
+                        "pose t=%.1fs x=%.1f y=%.1f yaw=%.1f v=%.2f "
+                        "lane_off=%+.2f curve=%+.4f dist=%.0f",
+                        sim_t[0],
+                        hl0.x,
+                        hl0.y,
+                        vehicle.get_transform().rotation.yaw,
+                        math.hypot(hv0.x, hv0.y),
+                        lane_off,
+                        curve,
+                        dist_m,
+                    )
+                except Exception as exc:
+                    logging.debug("pose log skipped: %s", exc)
 
             elapsed = time.time() - loop_start
             sleep_time = TARGET_PERIOD - elapsed

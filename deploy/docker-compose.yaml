@@ -30,6 +30,8 @@ services:
     ipc: host
     env_file:
       - config.env
+    environment:
+      - CRUISE_OVERRIDE_MPS=${CRUISE_OVERRIDE_MPS:-0.0}
     volumes:
       - ../adapter:/opt/adapter:ro
       - ./config/cyclonedds.xml:/autoware/cyclonedds.xml:ro
@@ -125,7 +127,7 @@ services:
       - SPAWN_INDEX=${SPAWN_INDEX:-184}
     volumes:
       - ./nodes/scenario.py:/opt/nodes/scenario.py:ro
-      - ./config/carla-rig.json:/opt/config/carla-rig.json:ro
+      - ./config/${RIG_JSON:-carla-rig.json}:/opt/config/carla-rig.json:ro
       - /tmp/carla-0.9.16-cp310-cp310-manylinux_2_31_x86_64.whl:/opt/carla-0.9.16-cp310-cp310-manylinux_2_31_x86_64.whl:ro
     command: >
       bash -lc "python3 -c 'import carla' 2>/dev/null ||

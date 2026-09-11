@@ -4,6 +4,9 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT/deploy"
+# Rig selection: RIG_JSON=carla-rig-empty.json for lead-free A/B runs.
+RIG_JSON="${RIG_JSON:-carla-rig.json}"
+export RIG_JSON
 SI_BIN="$ROOT/upstream/autoware-safety-island/build/freertos-posix/actuation_freertos"
 COMPOSE=(docker compose --env-file config.env --profile vp)
 
@@ -109,7 +112,7 @@ wait_for_carla
 "${COMPOSE[@]}" up -d --force-recreate scenario
 started_at="$(date --iso-8601=seconds)"
 wait_for_log openadkit-e2e-scenario "ego up" "CARLA scenario"
-if python3 -c "import json,sys; sys.exit(0 if json.load(open('$ROOT/deploy/config/carla-rig.json')).get('lead_vehicle', {}).get('enabled') else 1)"; then
+if python3 -c "import json,sys,os; sys.exit(0 if json.load(open('$ROOT/deploy/config/' + os.environ.get('RIG_JSON', 'carla-rig.json'))).get('lead_vehicle', {}).get('enabled') else 1)"; then
   wait_for_log openadkit-e2e-scenario "lead on-lane" "lead vehicle"
 fi
 "${COMPOSE[@]}" up -d --force-recreate carla-bridge

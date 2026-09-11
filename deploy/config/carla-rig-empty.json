@@ -1,0 +1,33 @@
+{
+  "type": "vehicle.lincoln.mkz_2020",
+  "id": "hero",
+  "spawn_index": 184,
+  "sensors": [
+    {
+      "type": "sensor.camera.rgb",
+      "id": "main_cam",
+      "spawn_point": { "x": 1.544, "y": -0.0243, "z": 2.116, "roll": -0.10, "pitch": 0.11, "yaw": 0.23 },
+      "attributes": {
+        "image_size_x": 1920,
+        "image_size_y": 1280,
+        "fov": 50,
+        "sensor_tick": 0.1
+      }
+    },
+    {
+      "type": "sensor.other.imu",
+      "id": "imu",
+      "spawn_point": { "x": 0.0, "y": 0.0, "z": 0.0, "roll": 0.0, "pitch": 0.0, "yaw": 0.0 },
+      "attributes": {
+        "sensor_tick": 0.1
+      }
+    }
+  ],
+  "npc_vehicles": [],
+  "lead_vehicle": {
+    "enabled": false,
+    "ahead_m": 30,
+    "cruise_mps": 5.0,
+    "cruise_s": 15.0
+  }
+}

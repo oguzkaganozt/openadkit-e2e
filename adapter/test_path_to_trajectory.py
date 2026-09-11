@@ -6,16 +6,20 @@ from path_to_trajectory import (
     DEFAULT_V_MIN_MPS,
     EXTENT_CAP_M,
     SERIALIZED_BYTE_BUDGET,
+    STALE_INPUT_MS,
+    STOP_WATCHDOG_SEC,
     TARGET_POINT_COUNT,
     Pose2D,
     convert,
     horizon_arc_lengths,
+    ingress_reason,
     sample_quadratic_path,
     sample_spatial,
     stop_trajectory,
     serialized_size_bytes,
     target_speed_mps,
     transform_to_odom,
+    watchdog_due,
     yaw_from_quaternion,
     quaternion_from_yaw,
     wrap_angle,
@@ -225,6 +229,80 @@ class ConvertTests(unittest.TestCase):
         for yaw in (0.0, 0.3, -1.2, math.pi / 2.0):
             x, y, z, w = quaternion_from_yaw(yaw)
             self.assertAlmostEqual(wrap_angle(yaw_from_quaternion(x, y, z, w)), wrap_angle(yaw))
+
+
+class IngressTests(unittest.TestCase):
+    # Phase 1 fault policy: late / dropped / restarted / bad-shape input
+    # each maps to an explicit stop downstream, never silence.
+
+    def test_fresh_input_is_trusted(self):
+        self.assertEqual(ingress_reason(5000.0, 4950.0, 4960.0), "")
+
+    def test_no_horizon_yet(self):
+        self.assertEqual(ingress_reason(5000.0, 0.0, 4960.0), "no-horizon-yet")
+
+    def test_late_horizon_is_rejected(self):
+        now = 5000.0
+        self.assertEqual(
+            ingress_reason(now, now - STALE_INPUT_MS - 1.0, now - 50.0),
+            "stale-horizon",
+        )
+
+    def test_boundary_horizon_is_trusted(self):
+        now = 5000.0
+        self.assertEqual(
+            ingress_reason(now, now - STALE_INPUT_MS, now - 50.0), ""
+        )
+
+    def test_stale_odom_is_rejected(self):
+        now = 5000.0
+        self.assertEqual(
+            ingress_reason(now, now - 50.0, now - STALE_INPUT_MS - 1.0),
+            "stale-odom",
+        )
+
+    def test_watchdog_fires_on_dropped_path(self):
+        self.assertTrue(watchdog_due(10.0, 5.0))
+        self.assertTrue(watchdog_due(10.0, 0.0))
+
+    def test_watchdog_quiet_on_fresh_path(self):
+        self.assertFalse(watchdog_due(10.0, 10.0 - STOP_WATCHDOG_SEC))
+        self.assertFalse(watchdog_due(10.0, 9.9))
+
+    def test_restart_recovers_on_fresh_arrival(self):
+        # After a dropout, the first fresh arrival clears both gates:
+        # ingress trusts it and the watchdog goes quiet.
+        now = 60.0
+        self.assertEqual(ingress_reason(now * 1000.0, now * 1000.0 - 50.0, now * 1000.0 - 50.0), "")
+        self.assertFalse(watchdog_due(now, now))
+
+    def test_bad_shape_maps_to_stop(self):
+        # Zero byte budget can never fit a point: convert returns None
+        # and the caller must answer with an explicit stop trajectory.
+        path = sample_quadratic_path(0.0, 0.0, 0.0, x_max_m=20.0)
+        self.assertIsNone(
+            convert(
+                path,
+                Pose2D(0.0, 0.0, 0.0),
+                speed_horizon=[3.0] * 20,
+                byte_budget=0,
+            )
+        )
+        stop = stop_trajectory(Pose2D(0.0, 0.0, 0.0))
+        self.assertEqual(len(stop), 3)
+        for p in stop:
+            self.assertAlmostEqual(p.longitudinal_velocity_mps, 0.0)
+
+    def test_cruise_override_ignores_horizon(self):
+        # A/B knob: constant speed on the VP path shape, no horizon used.
+        path = sample_quadratic_path(0.0, 0.0, 0.0, x_max_m=20.0)
+        out = convert(
+            path, Pose2D(0.0, 0.0, 0.0), target_velocity_mps=3.0,
+            speed_horizon=None,
+        )
+        assert out is not None
+        for p in out:
+            self.assertAlmostEqual(p.longitudinal_velocity_mps, 3.0)
 
 
 if __name__ == "__main__":

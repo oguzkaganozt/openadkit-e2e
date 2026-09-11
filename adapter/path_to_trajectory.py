@@ -12,6 +12,7 @@ the functions below test without a ROS install.
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import dataclass
 
 EXTENT_CAP_M = 25.0
@@ -48,6 +49,16 @@ DEFAULT_INPUT_ODOM_TOPIC = "/localization/kinematic_state"
 DEFAULT_INPUT_HORIZON_TOPIC = "/vehicle/speed_horizon"
 DEFAULT_INPUT_ACCEL_TOPIC = "/vehicle/throttle_cmd"
 DEFAULT_OUTPUT_TOPIC = "/planning/scenario_planning/trajectory"
+# Ingress staleness bound (ms). Healthy runs show horizon age 50-270 ms
+# (xfer h_age) and odom at 20 Hz, so 1000 ms is >3x the worst healthy
+# sample — not a copied 0.5 s. Anything older means VP (or the bridge
+# odom feed) is dead, and the answer is an explicit stop trajectory,
+# never silence: SI latches its last trajectory (has_trajectory_ never
+# clears), so silence would drive stale forever.
+STALE_INPUT_MS = 1000.0
+# Watchdog period bound (s). If no fresh Path arrives at all (VP fully
+# dead), the on_path callback never fires, so a timer publishes the stop.
+STOP_WATCHDOG_SEC = 1.0
 
 
 @dataclass(frozen=True)
@@ -218,6 +229,40 @@ def stop_trajectory(ego: Pose2D) -> list[TrajectoryPoint]:
         TrajectoryPoint(p1.x, p1.y, p1.yaw, 0.0, 0.25, acceleration_mps2=-1.0),
         TrajectoryPoint(p2.x, p2.y, p2.yaw, 0.0, 0.50, acceleration_mps2=-1.0),
     ]
+
+
+def ingress_reason(
+    now_ms: float,
+    horizon_at_ms: float,
+    odom_at_ms: float,
+    stale_ms: float = STALE_INPUT_MS,
+) -> str:
+    """Why the latest input must not be trusted, or "" when fresh.
+
+    Pure policy: no sequence exists on this wire (Float32MultiArray has
+    no seq field), so arrival age is the only staleness signal. A stale
+    or missing horizon/odom maps to an explicit stop downstream.
+    """
+    if horizon_at_ms <= 0.0:
+        return "no-horizon-yet"
+    if now_ms - horizon_at_ms > stale_ms:
+        return "stale-horizon"
+    if odom_at_ms <= 0.0:
+        return "no-odom-yet"
+    if now_ms - odom_at_ms > stale_ms:
+        return "stale-odom"
+    return ""
+
+
+def watchdog_due(
+    now_s: float,
+    last_path_at_s: float,
+    period_s: float = STOP_WATCHDOG_SEC,
+) -> bool:
+    """True when no fresh Path arrived within the watchdog period."""
+    if last_path_at_s <= 0.0:
+        return True
+    return now_s - last_path_at_s > period_s
 
 
 def sample_horizon(horizon: list[float], t_sec: float, dt_sec: float = HORIZON_DT_SEC) -> float:
@@ -502,6 +547,14 @@ def main(args=None) -> None:
     byte_budget = node.declare_parameter(
         "byte_budget", SERIALIZED_BYTE_BUDGET
     ).value
+    # A/B baseline knob: >0 ignores the VP horizon and drives the VP path
+    # shape at a constant speed through SI. 0.0 (default) = VP horizon.
+    cruise_override = float(
+        node.declare_parameter(
+            "cruise_override_mps",
+            float(os.environ.get("CRUISE_OVERRIDE_MPS", "0.0")),
+        ).value
+    )
 
     qos = QoSProfile(
         depth=1,
@@ -518,6 +571,44 @@ def main(args=None) -> None:
     horizon_at: list[float] = [0.0]
     accel_at: list[float] = [0.0]
     published_count = [0]
+    path_at: list[float] = [0.0]
+    stops_published = [0]
+    last_stop_log_at = [0.0]
+
+    def publish_points(points: list[TrajectoryPoint], stamp) -> None:
+        out = Trajectory()
+        out.header.stamp = stamp
+        out.header.frame_id = out_frame
+        for p in points:
+            tp = TrajMsg()
+            tp.pose = Pose()
+            tp.pose.position.x = p.x
+            tp.pose.position.y = p.y
+            qx, qy, qz, qw = quaternion_from_yaw(p.yaw)
+            tp.pose.orientation.x = qx
+            tp.pose.orientation.y = qy
+            tp.pose.orientation.z = qz
+            tp.pose.orientation.w = qw
+            tp.longitudinal_velocity_mps = p.longitudinal_velocity_mps
+            tp.acceleration_mps2 = p.acceleration_mps2
+            sec = int(p.time_from_start_sec)
+            nsec = int(round((p.time_from_start_sec - sec) * 1e9))
+            tp.time_from_start = Duration(sec=sec, nanosec=nsec)
+            out.points.append(tp)
+        publisher.publish(out)
+
+    def publish_stop(ego: Pose2D, reason: str) -> None:
+        # The defined answer to stale/invalid input: an explicit stop
+        # trajectory, never silence. SI latches its last trajectory, so
+        # silence would drive stale forever.
+        publish_points(stop_trajectory(ego), node.get_clock().now().to_msg())
+        stops_published[0] += 1
+        now = time_mod.monotonic()
+        if now - last_stop_log_at[0] > 2.0:
+            last_stop_log_at[0] = now
+            node.get_logger().warn(
+                "stop #%d reason=%s" % (stops_published[0], reason)
+            )
 
     def on_odom(msg: Odometry) -> None:
         q = msg.pose.pose.orientation
@@ -541,6 +632,15 @@ def main(args=None) -> None:
         ego = latest_ego[0]
         if ego is None:
             return
+        now = time_mod.monotonic()
+        path_at[0] = now
+        now_ms = now * 1000.0
+        reason = ingress_reason(
+            now_ms, horizon_at[0] * 1000.0, odom_at[0] * 1000.0
+        )
+        if reason and cruise_override <= 0.0:
+            publish_stop(ego, reason)
+            return
         path_points = []
         for ps in msg.poses:
             q = ps.pose.orientation
@@ -551,10 +651,20 @@ def main(args=None) -> None:
                     yaw_from_quaternion(q.x, q.y, q.z, q.w),
                 )
             )
+        if not path_points:
+            publish_stop(ego, "empty-path")
+            return
+        hz = None if cruise_override > 0.0 else latest_horizon[0]
+        if hz is None and cruise_override <= 0.0:
+            publish_stop(ego, "no-horizon-yet")
+            return
         points = convert(
             path_points,
             ego,
-            speed_horizon=latest_horizon[0],
+            target_velocity_mps=(
+                cruise_override if cruise_override > 0.0 else None
+            ),
+            speed_horizon=hz,
             vp_accel=latest_accel[0],
             v_min_mps=v_min,
             frame_id=out_frame,
@@ -563,39 +673,21 @@ def main(args=None) -> None:
             byte_budget=byte_budget,
         )
         if points is None:
+            publish_stop(ego, "bad-shape")
             return
-        out = Trajectory()
-        out.header.stamp = msg.header.stamp
-        out.header.frame_id = out_frame
-        for p in points:
-            tp = TrajMsg()
-            tp.pose = Pose()
-            tp.pose.position.x = p.x
-            tp.pose.position.y = p.y
-            qx, qy, qz, qw = quaternion_from_yaw(p.yaw)
-            tp.pose.orientation.x = qx
-            tp.pose.orientation.y = qy
-            tp.pose.orientation.z = qz
-            tp.pose.orientation.w = qw
-            tp.longitudinal_velocity_mps = p.longitudinal_velocity_mps
-            tp.acceleration_mps2 = p.acceleration_mps2
-            sec = int(p.time_from_start_sec)
-            nsec = int(round((p.time_from_start_sec - sec) * 1e9))
-            tp.time_from_start = Duration(sec=sec, nanosec=nsec)
-            out.points.append(tp)
-        publisher.publish(out)
+        publish_points(points, msg.header.stamp)
         published_count[0] += 1
-        now = time_mod.monotonic()
-        hz = latest_horizon[0]
         vp_a = latest_accel[0]
         a_age = (now - accel_at[0]) * 1000.0 if accel_at[0] else -1.0
         h_age = (now - horizon_at[0]) * 1000.0 if horizon_at[0] else -1.0
-        v0 = out.points[0].longitudinal_velocity_mps
-        vn = out.points[-1].longitudinal_velocity_mps
-        a0 = out.points[0].acceleration_mps2
+        v0 = points[0].longitudinal_velocity_mps
+        vn = points[-1].longitudinal_velocity_mps
+        a0 = points[0].acceleration_mps2
         odv = latest_odom_v[0]
         o_age = (now - odom_at[0]) * 1000.0 if odom_at[0] else -1.0
-        if hz:
+        if cruise_override > 0.0:
+            hinfo = "cruise-override %.1f" % cruise_override
+        elif hz:
             hc = [max(0.0, v) for v in hz]
             s_h = 0.0
             for i in range(1, len(hc)):
@@ -616,13 +708,35 @@ def main(args=None) -> None:
             f"odv={odv:.2f} o_age={o_age:.0f}ms"
         )
 
+    def on_watchdog() -> None:
+        # VP fully dead: no Path arrives, so on_path never fires. Publish
+        # the stop on a timer instead of going silent (SI would drive the
+        # last trajectory forever). Also clears the zombie horizon so
+        # motion cannot resume without a fresh Path alongside fresh input.
+        now = time_mod.monotonic()
+        ego = latest_ego[0]
+        if ego is None:
+            return
+        if watchdog_due(now, path_at[0]):
+            latest_horizon[0] = None
+            horizon_at[0] = 0.0
+            publish_stop(ego, "watchdog-no-path")
+
     node.create_subscription(Odometry, input_odom, on_odom, qos)
     node.create_subscription(Path, input_path, on_path, qos)
     node.create_subscription(Float32MultiArray, input_horizon, on_horizon, qos)
     node.create_subscription(Float64, input_accel, on_accel, qos)
+    node.create_timer(0.2, on_watchdog)
     node.get_logger().info(
         f"{input_path} + {input_odom} + {input_horizon} -> {output_topic} "
-        f"(≤{point_count} pts, {extent_cap} m, {byte_budget} B)"
+        f"(≤{point_count} pts, {extent_cap} m, {byte_budget} B, "
+        f"stale>{STALE_INPUT_MS:.0f}ms=stop, watchdog {STOP_WATCHDOG_SEC:.1f}s"
+        + (
+            ", cruise-override %.1f m/s" % cruise_override
+            if cruise_override > 0.0
+            else ""
+        )
+        + ")"
     )
     try:
         rclpy.spin(node)
