@@ -217,6 +217,31 @@ class GuardTests(unittest.TestCase):
         self.assertEqual(out.state, COMFORTABLE)
         self.assertNotEqual(out.reason, "traj-recovered")
 
+    def test_fresh_entry_resets_babble_baseline(self):
+        # A STOPPED→DRIVE step across a hold boundary must not read as
+        # babbling: entry into FRESH clears the jump baseline.
+        g = GuardPolicy()
+        live(g, 1000.0, v=0.0)
+        g.step(1010.0)
+        g.on_follower(cmd(1020.0, v=float("nan")))
+        g.step(1020.0)
+        self.assertEqual(g.state, EMERGENCY)
+        g.on_follower(cmd(1030.0, v=0.0))
+        g.on_odom(ego(1030.0, v=0.0))
+        g.on_traj(traj(1030.0, v=0.0), 1030.0)
+        g.step(1030.0)
+        self.assertEqual(g.state, HOLD)
+        live(g, 2000.0, v=0.0)
+        out = g.step(2010.0, re_enable=True)
+        self.assertEqual(out.state, FRESH)
+        # First DRIVE command with a large steer step: no stale
+        # baseline to compare against, so no babble trip.
+        g.on_follower(cmd(2020.0, v=2.0, s=0.5))
+        g.on_traj(traj(2020.0, v=2.0), 2020.0)
+        g.on_odom(ego(2020.0, v=0.5))
+        out = g.step(2020.0)
+        self.assertEqual(out.state, FRESH)
+
     def test_brake_cmd_freezes_last_steer(self):
         g = GuardPolicy()
         live(g, 1000.0)

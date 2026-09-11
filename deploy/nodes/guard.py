@@ -284,6 +284,18 @@ class GuardPolicy:
         self.state = state
         self.reason = reason
         self._clear_count = 0
+        if state == FRESH:
+            # Fresh baseline: the jump/babble detectors only mean
+            # something between consecutive commands of one continuous
+            # regime. A STOPPED→DRIVE step across a hold boundary is SI
+            # dynamics, not babbling (proven live: it re-tripped a
+            # legitimate release with a stale baseline). Both are
+            # cleared: the next arrival sets _last with no _prev to
+            # compare against, and the one after compares within the
+            # new regime.
+            self._prev_follower = None
+            self._last_follower = None
+            self._arrival_times = []
         if state in (COMFORTABLE, EMERGENCY):
             self._entries += 1
             self.false_stop_entries += 1
