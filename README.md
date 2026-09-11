@@ -82,17 +82,20 @@ rig (ground-truth gap + collision sensor): stop from 8.9 m/s, standstill
 at ~0 m true gap, then relaunch and contact at 0.8–1.9 m/s while VP
 reports free road or ghost 10–11 m single-frame re-confirms.
 
-Mitigations in tree (they soften, not cure): the CIPO latch on
-`feat/lane-path` (holds a confirmed-close track as stopped, coasts it
-with ego odometry, arms after 10 solid frames, releases after 5
-confirms, brakes while rolling blind) and the adapter's spatial
-transcription (`S_LEAD_M`). None of them can replace the missing
-detection.
+Mitigation in tree: the CIPO latch on `feat/lane-path` feeds the
+planner a hold model (`min(coast, 2 m)` as stopped) while a
+confirmed-close track is lost — never raw flicker — so IDM holds with
+accel and horizon consistent, and the adapter's spatial transcription
+(`S_LEAD_M`) carries the stop to SI (smooth-stop engages). Verified
+2026-09-11 on the Town04 lead rig: approach at ~9 m/s, stop, short
+creep, hold at ~7 m true gap, **zero collisions**, SI in STOPPING hold.
+The latch arms after 10 solid frames and releases after 5 trusted
+confirms; single-frame ghosts can neither arm nor release it.
 
-Consequence: the lead-stop scenario has **no hold guarantee under ~5 m
-true gap**. Do not use it for safety claims. Curing it needs
-close-range detection (truncated-bbox handling or a proximity source)
-or an independent SI-side veto (guard/MRM phase).
+Consequence: the car now holds *short* instead of creeping to 2 m —
+the creep-to-2 m mission still needs real close-range detection
+(truncated-bbox handling or a proximity source), and no safety claim
+rests on this scenario until then (guard/MRM phase).
 
 ### Lane changes at Town04 splits and merges
 
