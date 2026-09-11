@@ -29,5 +29,11 @@
       "type": "vehicle.*",
       "autopilot": true
     }
-  ]
+  ],
+  "lead_vehicle": {
+    "enabled": true,
+    "ahead_m": 30,
+    "cruise_mps": 5.0,
+    "cruise_s": 15.0
+  }
 }

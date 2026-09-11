@@ -182,6 +182,61 @@ def _setup_npc_traffic(world, traffic_manager, config, hero_spawn_index):
     return npc_vehicles
 
 
+def _walk_lane(wp, dist_m, use_next):
+    left = float(dist_m)
+    while left > 0.5:
+        cand = wp.next(2.0) if use_next else wp.previous(2.0)
+        if not cand:
+            break
+        wp = cand[0]
+        left -= 2.0
+    return wp
+
+
+def _in_front(hero_tf, loc):
+    fwd = hero_tf.get_forward_vector()
+    return (loc.x - hero_tf.location.x) * fwd.x + (loc.y - hero_tf.location.y) * fwd.y
+
+
+def _spawn_lead(world, hero, ahead_m, traffic_manager):
+    map_ = world.get_map()
+    hero_tf = hero.get_transform()
+    wp0 = map_.get_waypoint(
+        hero_tf.location, project_to_road=True, lane_type=carla.LaneType.Driving
+    )
+    if wp0 is None:
+        logging.warning("lead spawn: no waypoint at hero")
+        return None
+    a = _walk_lane(wp0, ahead_m, True)
+    b = _walk_lane(wp0, ahead_m, False)
+    wp = a if _in_front(hero_tf, a.transform.location) >= _in_front(
+        hero_tf, b.transform.location
+    ) else b
+    bp = world.get_blueprint_library().filter("vehicle.tesla.model3")[0]
+    bp.set_attribute("role_name", "lead")
+    tf = wp.transform
+    tf.location.z += 0.15
+    actor = world.try_spawn_actor(bp, tf)
+    if actor is None:
+        logging.warning("lead spawn failed at yaw %.1f", tf.rotation.yaw)
+        return None
+    actor.set_autopilot(True, traffic_manager.get_port())
+    traffic_manager.auto_lane_change(actor, False)
+    traffic_manager.vehicle_percentage_speed_difference(actor, 50)
+    logging.info(
+        "lead on-lane ~%.0fm ahead yaw=%.1f at (%.1f,%.1f) hero yaw=%.1f at (%.1f,%.1f) front=%.1f",
+        ahead_m,
+        tf.rotation.yaw,
+        tf.location.x,
+        tf.location.y,
+        hero_tf.rotation.yaw,
+        hero_tf.location.x,
+        hero_tf.location.y,
+        _in_front(hero_tf, tf.location),
+    )
+    return actor
+
+
 def main(args):
     world = None
     vehicle = None
@@ -218,11 +273,44 @@ def main(args):
             config = json.load(f)
 
         vehicle = _setup_vehicle(world, config)
+        world.tick()
         sensors = _setup_sensors(world, vehicle, config.get("sensors", []))
+
+        # Ground-truth instrumentation: collision events + hero/lead gap.
+        # Lets us score VP distance estimates and contact time without
+        # guessing from the camera.
+        sim_t = [0.0]
+        collisions = []
+        col_bp = world.get_blueprint_library().find("sensor.other.collision")
+        col_sensor = world.spawn_actor(col_bp, carla.Transform(), attach_to=vehicle)
+        sensors.append(col_sensor)
+        col_sensor.listen(
+            lambda event: collisions.append(
+                (
+                    sim_t[0],
+                    event.other_actor.type_id
+                    if event.other_actor is not None
+                    else "unknown",
+                    event.normal_impulse.x,
+                    event.normal_impulse.y,
+                    event.normal_impulse.z,
+                )
+            )
+        )
 
         # Spawn additional vehicles, avoiding the hero's (possibly env-overridden) spawn.
         hero_idx = int(os.environ.get("SPAWN_INDEX", config.get("spawn_index", 0)))
-        npc_vehicles = _setup_npc_traffic(world, traffic_manager, config, hero_idx)
+        lead_cfg = config.get("lead_vehicle") or {}
+        lead = None
+        lead_t = 0.0
+        if lead_cfg.get("enabled"):
+            lead = _spawn_lead(
+                world, vehicle, lead_cfg.get("ahead_m", 30.0), traffic_manager
+            )
+            if lead is not None:
+                npc_vehicles.append(lead)
+        else:
+            npc_vehicles = _setup_npc_traffic(world, traffic_manager, config, hero_idx)
 
         if args.autopilot:
             vehicle.set_autopilot(True)
@@ -234,11 +322,47 @@ def main(args):
         TARGET_HZ = 20.0
         TARGET_PERIOD = 1.0 / TARGET_HZ
 
+        tick = 0
         while True:
             loop_start = time.time()
 
+            if lead is not None and lead.is_alive:
+                lead_t += settings.fixed_delta_seconds or 0.05
+                cruise_s = float(lead_cfg.get("cruise_s", 15.0))
+                if lead_t >= cruise_s:
+                    if abs(lead_t - cruise_s) < 0.08:
+                        logging.info("lead braking now (t=%.1fs)", lead_t)
+                        lead.set_autopilot(False)
+                    ctrl = carla.VehicleControl(throttle=0.0, brake=0.8)
+                    lead.apply_control(ctrl)
+
             world.tick()
             _follow_vehicle(world, vehicle, spectator)
+            tick += 1
+            sim_t[0] = tick * (settings.fixed_delta_seconds or 0.05)
+
+            while collisions:
+                t, other, ix, iy, iz = collisions.pop(0)
+                logging.warning(
+                    "COLLISION t=%.1fs with %s impulse=(%.1f,%.1f,%.1f)",
+                    t,
+                    other,
+                    ix,
+                    iy,
+                    iz,
+                )
+            if lead is not None and lead.is_alive and tick % 20 == 0:
+                hl = vehicle.get_location()
+                ll = lead.get_location()
+                hv = vehicle.get_velocity()
+                lv = lead.get_velocity()
+                logging.info(
+                    "gap t=%.1fs center=%.1f hero_v=%.2f lead_v=%.2f",
+                    sim_t[0],
+                    math.hypot(hl.x - ll.x, hl.y - ll.y),
+                    math.hypot(hv.x, hv.y),
+                    math.hypot(lv.x, lv.y),
+                )
 
             elapsed = time.time() - loop_start
             sleep_time = TARGET_PERIOD - elapsed

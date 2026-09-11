@@ -20,6 +20,21 @@ SERIALIZED_BYTE_BUDGET = 1300
 DEFAULT_TARGET_SPEED_MPS = 3.0
 DEFAULT_V_MIN_MPS = 1.0
 HORIZON_DT_SEC = 0.05
+# Actuation deadband compensation (m/s). CARLA static friction plus the
+# bridge map needs ~0.8 m/s of velocity demand to break away; 0.2 does
+# not move the car. This only floors the FIRST point when the VP schedule
+# rises from an exact-zero standstill — the ramp itself still comes 100%
+# from VP. It is a deadband fix, not a behavior decision.
+LAUNCH_FLOOR_MPS = 0.8
+# Schedule shows motion intent when its end exceeds this (m/s). Below it
+# (flat-zero schedule) the zeros are transcribed honestly so the SI
+# STOPPED hold engages. When in doubt we move: VP replans at ~7 Hz and
+# brakes a wrong launch within ~150 ms, while a false hold at zero
+# (stop point at the ego's feet) never self-corrects.
+MOTION_HN_MPS = 0.2
+# Near-field arcs (m) always represented so SI's ~0.2 m lookahead target
+# lands on the transcribed ramp instead of a coarse downsample chord.
+NEAR_ARC_M = (0.25, 0.5, 1.0, 2.0)
 DEFAULT_FRAME_ID = "map"
 
 CDR_ENCAPSULATION_BYTES = 4
@@ -32,6 +47,7 @@ CDR_TRAJECTORY_POINT_ALIGNMENT = 8
 DEFAULT_INPUT_PATH_TOPIC = "/vehicle/lane_path"
 DEFAULT_INPUT_ODOM_TOPIC = "/localization/kinematic_state"
 DEFAULT_INPUT_HORIZON_TOPIC = "/vehicle/speed_horizon"
+DEFAULT_INPUT_ACCEL_TOPIC = "/vehicle/throttle_cmd"
 DEFAULT_OUTPUT_TOPIC = "/planning/scenario_planning/trajectory"
 
 
@@ -218,12 +234,124 @@ def sample_horizon(horizon: list[float], t_sec: float, dt_sec: float = HORIZON_D
     return max(0.0, horizon[i] * (1.0 - frac) + horizon[i + 1] * frac)
 
 
+RESAMPLE_STEP_M = 0.25
+
+
+def resample_path(points: list[Pose2D], step_m: float = RESAMPLE_STEP_M) -> list[Pose2D]:
+    """Densify a polyline so sub-meter schedule detail survives indexing.
+
+    The VP lane path arrives at 1 m spacing; linear resampling between
+    those samples is faithful (smooth polynomial) and only affects
+    internal resolution — the emitted point budget is unchanged.
+    """
+    if len(points) < 2 or step_m <= 0.0:
+        return list(points)
+    out = [points[0]]
+    for a, b in zip(points, points[1:]):
+        seg = math.hypot(b.x - a.x, b.y - a.y)
+        if seg <= 1e-9:
+            continue
+        dyaw = wrap_angle(b.yaw - a.yaw)
+        n = max(1, int(math.ceil(seg / step_m)))
+        for k in range(1, n + 1):
+            frac = k / n
+            out.append(
+                Pose2D(
+                    a.x + (b.x - a.x) * frac,
+                    a.y + (b.y - a.y) * frac,
+                    wrap_angle(a.yaw + dyaw * frac),
+                )
+            )
+    return out
+
+
+def horizon_arc_lengths(
+    horizon: list[float], dt_sec: float = HORIZON_DT_SEC
+) -> list[float]:
+    """Integrate a temporal speed schedule v(t) into arc positions s(t).
+
+    Trapezoid rule. Exact zeros in the horizon stay exact zeros in s(t),
+    so a VP stop schedule transcribes to zero-velocity arc points that
+    the SI follower reads as a stop (its stop machinery keys off those).
+    """
+    s = [0.0]
+    for i in range(1, len(horizon)):
+        v0 = max(0.0, horizon[i - 1])
+        v1 = max(0.0, horizon[i])
+        s.append(s[-1] + 0.5 * (v0 + v1) * dt_sec)
+    return s
+
+
+def sample_spatial(
+    s_knots: list[float],
+    v_knots: list[float],
+    s: float,
+    hold: float,
+    dt_sec: float = HORIZON_DT_SEC,
+) -> tuple[float, float]:
+    """Speed and schedule-time at arc s.
+
+    Inside the horizon extent, linear interpolation of the transcribed
+    schedule. Beyond it, hold the last horizon speed (there is no VP
+    information there; the SI longitudinal target lives <1 m ahead, so
+    the hold only feeds the far field).
+    """
+    if not s_knots:
+        return max(0.0, hold), 0.0
+    if s <= 0.0:
+        return max(0.0, v_knots[0]), 0.0
+    if s >= s_knots[-1]:
+        extra = s - s_knots[-1]
+        t = (len(s_knots) - 1) * dt_sec + extra / max(hold, 0.3)
+        return max(0.0, hold), t
+    lo, hi = 0, len(s_knots) - 1
+    while lo + 1 < hi:
+        mid = (lo + hi) // 2
+        if s_knots[mid] < s:
+            lo = mid
+        else:
+            hi = mid
+    seg = s_knots[hi] - s_knots[lo]
+    frac = 0.0 if seg <= 1e-9 else (s - s_knots[lo]) / seg
+    v = v_knots[lo] * (1.0 - frac) + v_knots[hi] * frac
+    return max(0.0, v), (lo + frac) * dt_sec
+
+
+def profile_accelerations(
+    speeds: list[float], times: list[float], fallback: float = 0.0
+) -> list[float]:
+    """Per-point dv/dt so the accel field agrees with the speed profile.
+
+    A constant accel copied onto a flat speed profile makes the SI
+    feedforward fight its velocity loop; differentiating keeps them
+    consistent (0 on holds and stop tails, slope on ramps).
+    """
+    n = len(speeds)
+    if n == 0:
+        return []
+    if n == 1:
+        return [fallback]
+    out = [0.0] * n
+    for i in range(n):
+        if i == 0:
+            dt = times[1] - times[0]
+            out[i] = (speeds[1] - speeds[0]) / dt if dt > 1e-6 else fallback
+        elif i == n - 1:
+            dt = times[-1] - times[-2]
+            out[i] = (speeds[-1] - speeds[-2]) / dt if dt > 1e-6 else 0.0
+        else:
+            dt = times[i + 1] - times[i - 1]
+            out[i] = (speeds[i + 1] - speeds[i - 1]) / dt if dt > 1e-6 else 0.0
+    return out
+
+
 def convert(
     path_points: list[Pose2D],
     ego: Pose2D,
     *,
     target_velocity_mps: float | None = None,
     speed_horizon: list[float] | None = None,
+    vp_accel: float | None = None,
     horizon_dt_sec: float = HORIZON_DT_SEC,
     v_min_mps: float = DEFAULT_V_MIN_MPS,
     frame_id: str = DEFAULT_FRAME_ID,
@@ -237,6 +365,7 @@ def convert(
         return stop_trajectory(ego)
 
     world = [transform_to_odom(p, ego) for p in path_points]
+    world = resample_path(world)
     positions = [(p.x, p.y) for p in world]
     indices = downsample_indices(
         positions,
@@ -256,6 +385,26 @@ def convert(
     if serialized_size_bytes(len(frame_id), len(indices)) > byte_budget:
         return None
 
+    if speed_horizon:
+        # Force near-field samples: the SI longitudinal target sits a few
+        # decimeters ahead, and a coarse 25 m downsample would chord over
+        # the sub-meter ramp/stop detail transcribed from the 1 s horizon.
+        full_lengths = cumulative_arc_lengths(positions)
+        extent = min(extent_cap_m, full_lengths[-1]) if full_lengths else 0.0
+        extra = set()
+        for want in NEAR_ARC_M:
+            if 0.0 < want < extent:
+                extra.add(_nearest_index(full_lengths, want))
+        if extra:
+            budget = min(
+                target_point_count, max_points_within(len(frame_id), byte_budget)
+            )
+            # Merge, then shed far points first if over budget: the near
+            # field carries the stop/ramp detail, the far field is a hold.
+            indices = sorted(set(indices) | extra)
+            while len(indices) > max(budget, 1):
+                indices = indices[: len(indices) - 1]
+
     selected = [world[i] for i in indices]
     if math.hypot(selected[0].x - ego.x, selected[0].y - ego.y) > 0.5:
         selected = [ego] + selected
@@ -270,32 +419,56 @@ def convert(
         if speed_horizon
         else target_speed_mps(target_velocity_mps or 0.0, v_min_mps)
     )
-    n = max(len(selected) - 1, 1)
-    horizon_span = (
-        max(len(speed_horizon) - 1, 1) * horizon_dt_sec if speed_horizon else 0.0
-    )
-    preview = 0.5 if speed_horizon else 0.0
-    t = 0.0
-    for i, p in enumerate(selected):
-        if speed_horizon:
-            t = preview + horizon_span * i / n
-            speed = sample_horizon(speed_horizon, t, horizon_dt_sec)
-            v_next = sample_horizon(
-                speed_horizon, t + horizon_dt_sec, horizon_dt_sec
-            )
-            accel = (v_next - speed) / horizon_dt_sec
+    speeds: list[float] = []
+    times: list[float] = []
+    accels: list[float] = []
+    if speed_horizon:
+        # Faithful transcription: VP's 1 s speed schedule v(t) becomes a
+        # spatial profile v(s) via s(t) = ∫v dt. Ramp, hold, and stop-tail
+        # (exact zeros) all survive, so the SI stop machinery sees stops
+        # as trajectory properties instead of momentary velocity values.
+        h = [max(0.0, v) for v in speed_horizon]
+        hn = h[-1]
+        s_knots = horizon_arc_lengths(h, horizon_dt_sec)
+        for s in lengths:
+            v, t = sample_spatial(s_knots, h, s, hn, horizon_dt_sec)
+            speeds.append(v)
+            times.append(t)
+        t_h = max(horizon_dt_sec * (len(h) - 1), horizon_dt_sec)
+        if vp_accel is None and t_h > 0.0:
+            fallback = (hn - h[0]) / t_h
+        elif vp_accel is not None:
+            fallback = vp_accel
         else:
+            fallback = 0.0
+        launching = h[0] < 0.1 and hn > MOTION_HN_MPS
+        if launching and speeds:
+            # An exact zero under the ego reads as "stop line reached"
+            # to the SI stop search (stop_dist ~= 0 -> STOPPED forever),
+            # so a rising schedule must not start on an exact zero.
+            speeds[0] = max(speeds[0], LAUNCH_FLOOR_MPS)
+            times[0] = 0.0
+        accels = profile_accelerations(speeds, times, fallback)
+        if launching and accels:
+            # Differentiating across the floor step would understate the
+            # launch demand; the schedule slope (== VP accel) is the
+            # honest feedforward here.
+            accels[0] = fallback
+    else:
+        for s in lengths:
             speed = cruise if cruise is not None else 0.0
-            accel = 0.0
-            t = 0.0 if speed <= 0.0 else lengths[i] / speed
+            speeds.append(speed)
+            times.append(0.0 if speed <= 0.0 else s / speed)
+            accels.append(0.0)
+    for i, p in enumerate(selected):
         out.append(
             TrajectoryPoint(
                 x=p.x,
                 y=p.y,
                 yaw=p.yaw,
-                longitudinal_velocity_mps=speed,
-                time_from_start_sec=max(0.0, t - preview),
-                acceleration_mps2=accel,
+                longitudinal_velocity_mps=speeds[i],
+                time_from_start_sec=times[i],
+                acceleration_mps2=accels[i],
             )
         )
     return out
@@ -307,7 +480,8 @@ def main(args=None) -> None:
     from builtin_interfaces.msg import Duration
     from geometry_msgs.msg import Pose
     from nav_msgs.msg import Odometry, Path
-    from std_msgs.msg import Float32MultiArray
+    from std_msgs.msg import Float32MultiArray, Float64
+    import time as time_mod
     from rclpy.executors import ExternalShutdownException
     from rclpy.qos import (
         QoSDurabilityPolicy,
@@ -327,6 +501,9 @@ def main(args=None) -> None:
     ).value
     input_horizon = node.declare_parameter(
         "input_horizon_topic", DEFAULT_INPUT_HORIZON_TOPIC
+    ).value
+    input_accel = node.declare_parameter(
+        "input_accel_topic", DEFAULT_INPUT_ACCEL_TOPIC
     ).value
     output_topic = node.declare_parameter("output_topic", DEFAULT_OUTPUT_TOPIC).value
     v_min = node.declare_parameter("v_min_mps", DEFAULT_V_MIN_MPS).value
@@ -348,6 +525,9 @@ def main(args=None) -> None:
     publisher = node.create_publisher(Trajectory, output_topic, qos)
     latest_ego: list[Pose2D | None] = [None]
     latest_horizon: list[list[float] | None] = [None]
+    latest_accel: list[float | None] = [None]
+    horizon_at: list[float] = [0.0]
+    accel_at: list[float] = [0.0]
     published_count = [0]
 
     def on_odom(msg: Odometry) -> None:
@@ -360,6 +540,12 @@ def main(args=None) -> None:
 
     def on_horizon(msg: Float32MultiArray) -> None:
         latest_horizon[0] = [float(v) for v in msg.data]
+        horizon_at[0] = time_mod.monotonic()
+
+    def on_accel(msg: Float64) -> None:
+        latest_accel[0] = float(msg.data)
+        accel_at[0] = time_mod.monotonic()
+
     def on_path(msg: Path) -> None:
         ego = latest_ego[0]
         if ego is None:
@@ -378,6 +564,7 @@ def main(args=None) -> None:
             path_points,
             ego,
             speed_horizon=latest_horizon[0],
+            vp_accel=latest_accel[0],
             v_min_mps=v_min,
             frame_id=out_frame,
             extent_cap_m=extent_cap,
@@ -407,27 +594,38 @@ def main(args=None) -> None:
             out.points.append(tp)
         publisher.publish(out)
         published_count[0] += 1
-        if published_count[0] == 1 or published_count[0] % 100 == 0:
-            first = out.points[0].pose.position
-            last = out.points[-1].pose.position
-            v0 = out.points[0].longitudinal_velocity_mps
-            vn = out.points[-1].longitudinal_velocity_mps
-            hz = latest_horizon[0]
+        now = time_mod.monotonic()
+        hz = latest_horizon[0]
+        vp_a = latest_accel[0]
+        a_age = (now - accel_at[0]) * 1000.0 if accel_at[0] else -1.0
+        h_age = (now - horizon_at[0]) * 1000.0 if horizon_at[0] else -1.0
+        v0 = out.points[0].longitudinal_velocity_mps
+        vn = out.points[-1].longitudinal_velocity_mps
+        a0 = out.points[0].acceleration_mps2
+        if hz:
+            hc = [max(0.0, v) for v in hz]
+            s_h = 0.0
+            for i in range(1, len(hc)):
+                s_h += 0.5 * (hc[i - 1] + hc[i]) * HORIZON_DT_SEC
+            stop0 = next(
+                (i for i, v in enumerate(hc) if v <= 1e-6), -1
+            )
             hinfo = (
-                f"h0={hz[0]:.2f} hn={hz[-1]:.2f} n={len(hz)}"
-                if hz
-                else "no-horizon"
+                f"h0={hc[0]:.2f} hn={hc[-1]:.2f} n={len(hc)} "
+                f"s_h={s_h:.1f} stop0={stop0}"
             )
-            node.get_logger().info(
-                f"published Trajectory #{published_count[0]} ({len(out.points)} points, "
-                f"v0={v0:.2f} vn={vn:.2f} m/s {hinfo}, "
-                f"first=({first.x:.2f}, {first.y:.2f}), "
-                f"last=({last.x:.2f}, {last.y:.2f}))"
-            )
+        else:
+            hinfo = "no-horizon"
+        node.get_logger().info(
+            f"xfer #{published_count[0]} vp_a={vp_a if vp_a is not None else 'NA'} "
+            f"a_age={a_age:.0f}ms h_age={h_age:.0f}ms {hinfo} "
+            f"v0={v0:.2f} vn={vn:.2f} traj_a0={a0:.2f}"
+        )
 
     node.create_subscription(Odometry, input_odom, on_odom, qos)
     node.create_subscription(Path, input_path, on_path, qos)
     node.create_subscription(Float32MultiArray, input_horizon, on_horizon, qos)
+    node.create_subscription(Float64, input_accel, on_accel, qos)
     node.get_logger().info(
         f"{input_path} + {input_odom} + {input_horizon} -> {output_topic} "
         f"(≤{point_count} pts, {extent_cap} m, {byte_budget} B)"

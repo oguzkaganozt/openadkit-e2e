@@ -66,6 +66,7 @@ services:
     volumes:
       - ./nodes:/opt/nodes:ro
       - ./config/cyclonedds.xml:/autoware/cyclonedds.xml:ro
+      - /tmp/snaps:/tmp/snaps:rw
       - /tmp/carla-0.9.16-cp310-cp310-manylinux_2_31_x86_64.whl:/opt/carla-0.9.16-cp310-cp310-manylinux_2_31_x86_64.whl:ro
     command: >
       bash -lc "source /opt/ros/$${ROS_DISTRO}/setup.bash &&

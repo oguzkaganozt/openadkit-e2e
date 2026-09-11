@@ -10,6 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import carla
 import cv2
 import numpy as np
+import os
 import rclpy
 from autoware_control_msgs.msg import Control
 from autoware_vehicle_msgs.msg import SteeringReport
@@ -123,6 +124,15 @@ class CarlaBridge(Node):
         self._preview_frame = None
         self._camera_count = 0
         self._camera_started = time.monotonic()
+        # 1 Hz run-evidence snapshots (user asked: a picture every second
+        # next to the logs). Host-mounted at /tmp/snaps via compose.
+        self._snap_dir = os.environ.get("SNAP_DIR", "/tmp/snaps")
+        self._snap_period = float(os.environ.get("SNAP_PERIOD_SEC", "1.0"))
+        self._snap_keep = int(os.environ.get("SNAP_KEEP", "900"))
+        try:
+            os.makedirs(self._snap_dir, exist_ok=True)
+        except Exception:
+            self._snap_dir = ""
 
         img_qos = QoSProfile(
             depth=1,
@@ -149,6 +159,7 @@ class CarlaBridge(Node):
         self.create_timer(0.05, self._on_timer)
         threading.Thread(target=self._http, daemon=True).start()
         threading.Thread(target=self._preview_loop, daemon=True).start()
+        threading.Thread(target=self._snap_loop, daemon=True).start()
         threading.Thread(target=self._image_pub_loop, daemon=True).start()
         threading.Thread(target=self._carla_loop, daemon=True).start()
         self.get_logger().info("carla_bridge: CARLA RPC %s:%s http://0.0.0.0:8090/" % (host, port))
@@ -389,6 +400,39 @@ class CarlaBridge(Node):
                         _jpeg = buf.tobytes()
             except Exception as exc:
                 self.get_logger().error("preview: %s" % exc)
+
+    def _snap_loop(self):
+        next_at = time.monotonic()
+        while not self._stop:
+            now = time.monotonic()
+            if now < next_at:
+                time.sleep(0.05)
+                continue
+            next_at = now + max(self._snap_period, 0.2)
+            if not self._snap_dir:
+                continue
+            with self._lock:
+                frame = self._preview_frame
+            if frame is None:
+                continue
+            try:
+                small = cv2.resize(frame, (640, 427))
+                ok, buf = cv2.imencode(
+                    ".jpg", small, [int(cv2.IMWRITE_JPEG_QUALITY), 60]
+                )
+                if not ok:
+                    continue
+                name = "snap_%d.jpg" % int(time.time() * 1000)
+                with open(os.path.join(self._snap_dir, name), "wb") as f:
+                    f.write(buf.tobytes())
+                files = sorted(os.listdir(self._snap_dir))
+                for old in files[: max(0, len(files) - self._snap_keep)]:
+                    try:
+                        os.remove(os.path.join(self._snap_dir, old))
+                    except OSError:
+                        pass
+            except Exception as exc:
+                self.get_logger().error("snap: %s" % exc)
 
     def _http(self):
         self._http_server = ThreadingHTTPServer(("0.0.0.0", 8090), _MjpegHandler)

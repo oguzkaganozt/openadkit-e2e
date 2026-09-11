@@ -9,7 +9,9 @@ from path_to_trajectory import (
     TARGET_POINT_COUNT,
     Pose2D,
     convert,
+    horizon_arc_lengths,
     sample_quadratic_path,
+    sample_spatial,
     stop_trajectory,
     serialized_size_bytes,
     target_speed_mps,
@@ -119,23 +121,94 @@ class ConvertTests(unittest.TestCase):
         self.assertEqual(len(out), 3)
         self.assertAlmostEqual(out[0].longitudinal_velocity_mps, 0.0)
 
-    def test_standstill_horizon_speeds_up_along_path(self):
+    def test_arc_lengths_integrate_trapezoid(self):
+        self.assertEqual(
+            horizon_arc_lengths([0.0, 1.0, 2.0], 0.05), [0.0, 0.025, 0.1]
+        )
+
+    def test_spatial_sample_holds_beyond_extent(self):
+        v, t = sample_spatial([0.0, 0.5], [1.0, 2.0], 5.0, 2.0, 0.05)
+        self.assertAlmostEqual(v, 2.0)
+        self.assertGreater(t, 0.05)
+
+    def test_launch_ramp_from_rest(self):
+        # VP: 0 -> 1.425 m/s over 1 s at +1.5 m/s^2. The near field must
+        # carry the ramp (SI target lives <1 m ahead) and the far field
+        # must hold the last horizon speed.
         path = sample_quadratic_path(0.0, 0.0, 0.0, x_max_m=20.0)
         horizon = [1.5 * 0.05 * i for i in range(20)]
         out = convert(path, Pose2D(0.0, 0.0, 0.0), speed_horizon=horizon)
         self.assertIsNotNone(out)
         assert out is not None
-        self.assertGreater(out[0].longitudinal_velocity_mps, 0.5)
-        self.assertGreater(out[-1].longitudinal_velocity_mps, 0.5)
+        speeds = [p.longitudinal_velocity_mps for p in out]
+        # Rising schedule from exact-zero standstill: first point floors
+        # at the actuation deadband (else the SI stop search parks on a
+        # zero under the ego forever); the ramp itself is transcribed.
+        self.assertAlmostEqual(speeds[0], 0.8)
+        self.assertAlmostEqual(speeds[-1], horizon[-1])
+        near = [p for p in out if 0.0 < p.x < 1.0]
+        self.assertTrue(near, "ramp detail lost to downsampling")
+        self.assertGreater(max(p.longitudinal_velocity_mps for p in near), 0.2)
+        self.assertGreater(out[0].acceleration_mps2, 1.0)
+        self.assertLess(out[0].acceleration_mps2, 2.0)
+        times = [p.time_from_start_sec for p in out]
+        self.assertTrue(all(math.isfinite(t) for t in times))
+        self.assertTrue(
+            all(b >= a for a, b in zip(times, times[1:])),
+            "schedule time must not run backwards",
+        )
 
-    def test_horizon_slows_along_path(self):
+    def test_flat_zero_horizon_holds_stop(self):
+        # Genuine stop schedule (no motion in 1 s): honest zeros, so the
+        # SI STOPPED hold engages instead of a false launch.
         path = sample_quadratic_path(0.0, 0.0, 0.0, x_max_m=20.0)
-        horizon = [5.0 - 0.2 * i for i in range(20)]
-        out = convert(path, Pose2D(0.0, 0.0, 0.0), speed_horizon=horizon)
-        self.assertIsNotNone(out)
+        out = convert(
+            path, Pose2D(0.0, 0.0, 0.0), speed_horizon=[0.0] * 20
+        )
         assert out is not None
-        self.assertGreater(out[0].longitudinal_velocity_mps, out[-1].longitudinal_velocity_mps)
-        self.assertAlmostEqual(out[0].longitudinal_velocity_mps, 3.0, places=1)
+        for p in out:
+            self.assertAlmostEqual(p.longitudinal_velocity_mps, 0.0)
+
+    def test_braking_horizon_encodes_stop(self):
+        # VP braking 2.0 -> 0.0: the profile must reach exact zeros and
+        # stay there, with no feedforward left on the stop tail.
+        path = sample_quadratic_path(0.0, 0.0, 0.0, x_max_m=20.0)
+        horizon = [max(0.0, 2.0 - 0.15 * i) for i in range(14)] + [0.0] * 6
+        out = convert(
+            path, Pose2D(0.0, 0.0, 0.0), speed_horizon=horizon, vp_accel=-3.0
+        )
+        assert out is not None
+        speeds = [p.longitudinal_velocity_mps for p in out]
+        self.assertAlmostEqual(speeds[0], 2.0)
+        self.assertIn(0.0, speeds)
+        for p in out:
+            if p.x > 1.0:
+                self.assertAlmostEqual(p.longitudinal_velocity_mps, 0.0)
+        self.assertLess(out[0].acceleration_mps2, -2.0)
+        self.assertAlmostEqual(out[-1].acceleration_mps2, 0.0)
+
+    def test_cruise_horizon_is_flat(self):
+        path = sample_quadratic_path(0.0, 0.0, 0.0, x_max_m=20.0)
+        out = convert(
+            path, Pose2D(0.0, 0.0, 0.0), speed_horizon=[5.0] * 20
+        )
+        assert out is not None
+        for p in out:
+            self.assertAlmostEqual(p.longitudinal_velocity_mps, 5.0)
+            self.assertAlmostEqual(p.acceleration_mps2, 0.0)
+
+    def test_creep_horizon_has_no_false_stop(self):
+        # Small positive schedule (standstill creep) must not contain
+        # exact zeros: only a true VP zero may read as a stop.
+        path = sample_quadratic_path(0.0, 0.0, 0.0, x_max_m=20.0)
+        horizon = [0.05 + 0.015 * i for i in range(20)]
+        out = convert(path, Pose2D(0.0, 0.0, 0.0), speed_horizon=horizon)
+        assert out is not None
+        speeds = [p.longitudinal_velocity_mps for p in out]
+        # Rising from below the deadband: first point floors so the SI
+        # stop search cannot park on it, the rest stays transcribed.
+        self.assertAlmostEqual(speeds[0], 0.8)
+        self.assertNotIn(0.0, speeds)
 
     def test_configured_target_speed(self):
         self.assertAlmostEqual(target_speed_mps(3.0), 3.0)
