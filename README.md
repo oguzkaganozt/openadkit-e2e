@@ -70,6 +70,51 @@ hundreds of metres on the same spawn.
 Until that controller is a separate, working loop, A/B for integration is
 SI+nominal 3 m/s vs SI+VP speed intent — not vanilla VP steering.
 
+### A/B baseline: SI+VP speed vs SI+3 m/s (empty road, 2026-09-11)
+
+Town04 spawn 184, no lead, no NPCs (`RIG_JSON=carla-rig-empty.json`;
+B adds `CRUISE_OVERRIDE_MPS=3.0`). Same road, same stack, 1 Hz
+ground-truth pose + lane-offset log. Shared segment t=40–95 s:
+
+| condition | mean v | max v | mean \|lane_off\| | max \|lane_off\| | dist |
+|---|---|---|---|---|---|
+| A: VP speed | 12.9 m/s | 19.0 m/s | 0.12 m | 1.76 m | 713 m |
+| B: flat 3 m/s | 2.95 m/s | 3.27 m/s | 0.02 m | 0.04 m | 162 m |
+
+Read: the pipeline carries either speed program faithfully (B holds
+3 m/s to ±0.3; A reaches 21 m/s with 9 cm mean tracking). The lateral
+limit is VP's own path at speed — A cuts an S-curve at 17.6 m/s
+(+1.76 m excursion, recovered), B never exceeds 4 cm. A then left the
+highway at a split at ~17 m/s and beached in the grass (guardrail
+contact, photos on record); B drove 632 m clean, then VP lost the lane
+in a fork (empty Path) and the adapter's ingress gate held the car
+on-road with zero contact (see below). So: longitudinal fidelity proven
+at both speeds; both runs ended on VP lateral limits, not the pipeline.
+
+### Phase 1 ingress: stale input now answers with a stop
+
+SI latches its last trajectory (`has_trajectory_` never clears), so a
+silent adapter would drive stale forever. The adapter now gates every
+input on age (`STALE_INPUT_MS=1000`, >3x the worst healthy 270 ms
+sample — not a copied 0.5 s): stale/missing horizon or odom, empty
+path, bad shape, or no Path at all for 1 s (watchdog) each publish an
+explicit zero-speed trajectory with a counted reason
+(`stop #N reason=...`), and the watchdog clears the zombie horizon so
+motion cannot resume without fresh input. Startup hold falls out of the
+same rule (`stop #1 reason=watchdog-no-path`, verified live). 33 unit
+tests cover the fault answers (late, dropped, restarted, bad shape;
+there is no sequence on this wire, so the policy is age-only by design).
+
+Live evidence (run B): two ~2 s VP input dropouts mid-cruise each
+answered with a brief conservative dip (3→~1 m/s, on-lane, full
+recovery, SI never left DRIVE); VP's planning loop never stalled, so
+the dips trace to brief input-side stalls met by the gate. When VP lost
+the lane outright at the fork, the gate held the car stopped on-road
+for 4+ minutes, SI in STOPPED hold, zero collisions. One evidence gap:
+per-container logs rotated before collection, so the dip onsets lack
+xfer traces — compose now pins `max-size/max-file` logging so a full
+run's evidence survives (applies from the next recreate).
+
 ### Unstable lead perception: flicker mid-range, blindness close-range
 
 VisionPilot's lead (CIPO) signal is range-dependent and nondeterministic

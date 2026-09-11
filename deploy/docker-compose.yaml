@@ -3,10 +3,20 @@
 #
 #   ./run-loop.sh
 
+# Keep a full run's evidence: verbose nodes (adapter xfer, SI 30 Hz)
+# otherwise rotate away mid-campaign. ~10x a night run per service.
+x-logging: &run-logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "50m"
+      max-file: "3"
+
 services:
   carla:
     image: ${CARLA_IMAGE:?Use --env-file config.env}
     container_name: openadkit-e2e-carla
+    <<: *run-logging
     network_mode: host
     init: true
     ipc: host
@@ -26,6 +36,7 @@ services:
   adapter:
     image: ${AUTOWARE_IMAGE:?Use --env-file config.env}
     container_name: openadkit-e2e-adapter
+    <<: *run-logging
     network_mode: host
     ipc: host
     env_file:
@@ -45,6 +56,7 @@ services:
   operation-mode:
     image: ${AUTOWARE_IMAGE:?Use --env-file config.env}
     container_name: openadkit-e2e-operation-mode
+    <<: *run-logging
     network_mode: host
     ipc: host
     env_file:
@@ -61,6 +73,7 @@ services:
   carla-bridge:
     image: ${AUTOWARE_IMAGE:?Use --env-file config.env}
     container_name: openadkit-e2e-carla-bridge
+    <<: *run-logging
     network_mode: host
     ipc: host
     env_file:
@@ -86,6 +99,7 @@ services:
       args:
         ROS_DISTRO: humble
     container_name: openadkit-e2e-bridge
+    <<: *run-logging
     network_mode: host
     ipc: host
     env_file:
@@ -99,6 +113,7 @@ services:
     profiles: ["vp"]
     image: ${VISIONPILOT_IMAGE:?Use --env-file config.env}
     container_name: openadkit-e2e-visionpilot
+    <<: *run-logging
     network_mode: host
     ipc: host
     runtime: ${VISIONPILOT_RUNTIME:-nvidia}
@@ -120,6 +135,7 @@ services:
   scenario:
     image: ${AUTOWARE_IMAGE:?Use --env-file config.env}
     container_name: openadkit-e2e-scenario
+    <<: *run-logging
     network_mode: host
     ipc: host
     init: true
@@ -140,6 +156,7 @@ services:
   si:
     image: ${AUTOWARE_IMAGE:?Use --env-file config.env}
     container_name: openadkit-e2e-si
+    <<: *run-logging
     network_mode: host
     ipc: host
     init: true
