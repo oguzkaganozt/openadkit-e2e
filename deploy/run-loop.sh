@@ -104,7 +104,10 @@ pkill -f "$ROOT/deploy/nodes/scenario.py" 2>/dev/null || true
 "${COMPOSE[@]}" up -d carla
 wait_for_carla
 # Shared DDS/mode infrastructure (no world handles; start once).
-"${COMPOSE[@]}" up -d domain-bridge operation-mode
+# The domain bridge is recreated so bridge-config.yaml changes (Phase 2
+# guard routing) always take effect; the audit fails fast otherwise.
+"${COMPOSE[@]}" up -d --force-recreate domain-bridge operation-mode
+"$ROOT/deploy/check-guard-routing.sh"
 # Fresh world FIRST: scenario load_world wipes every actor, so anything
 # holding CARLA handles must (re)start after it. Always recreate (never
 # restart): a world wipe must also reset VP latch/odom/fusion state and
@@ -118,8 +121,9 @@ fi
 "${COMPOSE[@]}" up -d --force-recreate carla-bridge
 started_at="$(date --iso-8601=seconds)"
 wait_for_log openadkit-e2e-carla-bridge "camera frame #" "bridge camera"
-"${COMPOSE[@]}" up -d --force-recreate adapter si visionpilot
+"${COMPOSE[@]}" up -d --force-recreate adapter si visionpilot guard
 started_at="$(date --iso-8601=seconds)"
+wait_for_log openadkit-e2e-guard "si_guard:" "guard subscribed"
 wait_for_log openadkit-e2e-adapter "vehicle/lane_path + /localization/kinematic_state" "adapter subscribed"
 wait_for_log openadkit-e2e-adapter "xfer #" "VP Path + adapter Trajectory"
 wait_for_log openadkit-e2e-visionpilot "plan: tyre=" "VP planning"

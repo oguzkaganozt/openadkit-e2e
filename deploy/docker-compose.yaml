@@ -93,6 +93,28 @@ services:
       - carla
     restart: on-failure
 
+  guard:
+    image: ${AUTOWARE_IMAGE:?Use --env-file config.env}
+    container_name: openadkit-e2e-guard
+    network_mode: host
+    ipc: host
+    <<: *run-logging
+    env_file:
+      - config.env
+    environment:
+      # Domain 2: sees raw SI output, publishes approved output.
+      - ROS_DOMAIN_ID=2
+    volumes:
+      - ./nodes:/opt/nodes:ro
+      - ./config/cyclonedds.xml:/autoware/cyclonedds.xml:ro
+    command: >
+      bash -lc "source /opt/ros/$${ROS_DISTRO}/setup.bash &&
+      source /opt/autoware/setup.bash &&
+      python3 /opt/nodes/guard.py"
+    depends_on:
+      - domain-bridge
+    restart: on-failure
+
   domain-bridge:
     build:
       context: ../upstream/autoware-safety-island/demo/bridge

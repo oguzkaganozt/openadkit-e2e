@@ -512,7 +512,7 @@ def main(args=None) -> None:
     from builtin_interfaces.msg import Duration
     from geometry_msgs.msg import Pose
     from nav_msgs.msg import Odometry, Path
-    from std_msgs.msg import Float32MultiArray, Float64
+    from std_msgs.msg import Bool, Float32MultiArray, Float64
     import time as time_mod
     from rclpy.executors import ExternalShutdownException
     from rclpy.qos import (
@@ -537,6 +537,13 @@ def main(args=None) -> None:
     input_accel = node.declare_parameter(
         "input_accel_topic", DEFAULT_INPUT_ACCEL_TOPIC
     ).value
+    inhibit_topic = node.declare_parameter(
+        "inhibit_topic", "/guard/inhibit_trajectory"
+    ).value
+    inhibited: list[bool] = [False]
+
+    def on_inhibit(msg: Bool) -> None:
+        inhibited[0] = bool(msg.data)
     output_topic = node.declare_parameter("output_topic", DEFAULT_OUTPUT_TOPIC).value
     v_min = node.declare_parameter("v_min_mps", DEFAULT_V_MIN_MPS).value
     out_frame = node.declare_parameter("frame_id", DEFAULT_FRAME_ID).value
@@ -634,6 +641,9 @@ def main(args=None) -> None:
             return
         now = time_mod.monotonic()
         path_at[0] = now
+        if inhibited[0]:
+            publish_stop(ego, "inhibited")
+            return
         now_ms = now * 1000.0
         reason = ingress_reason(
             now_ms, horizon_at[0] * 1000.0, odom_at[0] * 1000.0
@@ -726,6 +736,7 @@ def main(args=None) -> None:
     node.create_subscription(Path, input_path, on_path, qos)
     node.create_subscription(Float32MultiArray, input_horizon, on_horizon, qos)
     node.create_subscription(Float64, input_accel, on_accel, qos)
+    node.create_subscription(Bool, inhibit_topic, on_inhibit, qos)
     node.create_timer(0.2, on_watchdog)
     node.get_logger().info(
         f"{input_path} + {input_odom} + {input_horizon} -> {output_topic} "
