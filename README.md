@@ -70,6 +70,30 @@ hundreds of metres on the same spawn.
 Until that controller is a separate, working loop, A/B for integration is
 SI+nominal 3 m/s vs SI+VP speed intent — not vanilla VP steering.
 
+### Close-range lead loss: stops, then drives into the lead
+
+VisionPilot tracks a stopped lead at 8–30 m (brakes via IDM), but below
+~5 m both networks drop it: the bumper fills the frame, AutoDrive
+`flag_prob` falls under 0.40 and AutoSpeed reports no bbox. Fusion then
+reports 150 m free-road (`longitudinal_fusion.cpp`, no-confirm branch),
+IDM commands +1.5 m/s², and the pipeline — which transcribes VP intent
+1:1 — honestly executes it into the bumper. Measured on the Town04 lead
+rig (ground-truth gap + collision sensor): stop from 8.9 m/s, standstill
+at ~0 m true gap, then relaunch and contact at 0.8–1.9 m/s while VP
+reports free road or ghost 10–11 m single-frame re-confirms.
+
+Mitigations in tree (they soften, not cure): the CIPO latch on
+`feat/lane-path` (holds a confirmed-close track as stopped, coasts it
+with ego odometry, arms after 10 solid frames, releases after 5
+confirms, brakes while rolling blind) and the adapter's spatial
+transcription (`S_LEAD_M`). None of them can replace the missing
+detection.
+
+Consequence: the lead-stop scenario has **no hold guarantee under ~5 m
+true gap**. Do not use it for safety claims. Curing it needs
+close-range detection (truncated-bbox handling or a proximity source)
+or an independent SI-side veto (guard/MRM phase).
+
 ### Lane changes at Town04 splits and merges
 
 VisionPilot can switch between lanes at splits and merges, causing
