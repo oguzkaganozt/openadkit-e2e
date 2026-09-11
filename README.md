@@ -97,6 +97,16 @@ the creep-to-2 m mission still needs real close-range detection
 (truncated-bbox handling or a proximity source), and no safety claim
 rests on this scenario until then (guard/MRM phase).
 
+### Lateral cold-start swerve at launch
+
+The hero spawns exactly on the lane center (scenario snaps the spawn to
+the lane waypoint), yet VP's first cross-track estimates read ±1.0–1.7 m
+(sign flips run to run — estimate noise, not geometry) and converge
+within seconds. SI tracks the path, so the car visibly throws itself
+sideways on launch; once it grazed the right guardrail (~0.65 m/s,
+Town04 spawn 184). Upstream lateral warmup/confidence gating would fix
+it (the adapter already holds on an empty path); untouched so far.
+
 ### Lane changes at Town04 splits and merges
 
 VisionPilot can switch between lanes at splits and merges, causing
@@ -182,9 +192,4 @@ implementation: rich motion reference, supervisor gate, and environmental superv
 | Path                                                                                                              | Contents                                                        |
 | ----------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
 | [`deploy/`](deploy/README.md)                                                                                     | Setup, build, Compose services, and runtime configuration       |
-| [`adapter/`](adapter/path_to_trajectory.py)                                                                       | Lane path → Autoware trajectory conversion                      |
-| [`upstream/vision_pilot`](https://github.com/oguzkaganozt/autoware_vision_pilot/tree/feat/lane-path)               | VisionPilot fork that publishes `/vehicle/lane_path`            |
-| [`upstream/autoware-safety-island`](https://github.com/autowarefoundation/autoware-safety-island)                  | Pinned Safety Island submodule                                  |
-
-CARLA uses the `carlasim/carla:0.9.16` container image and its Python API.
-Native ROS integration (`--ros2`) is disabled.
+| [`adapter/`](adapter/path_to_trajectory.py)                                                                       | Lane path → Autoware traj
