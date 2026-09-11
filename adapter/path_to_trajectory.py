@@ -511,6 +511,8 @@ def main(args=None) -> None:
     )
     publisher = node.create_publisher(Trajectory, output_topic, qos)
     latest_ego: list[Pose2D | None] = [None]
+    latest_odom_v: list[float] = [0.0]
+    odom_at: list[float] = [0.0]
     latest_horizon: list[list[float] | None] = [None]
     latest_accel: list[float | None] = [None]
     horizon_at: list[float] = [0.0]
@@ -524,6 +526,8 @@ def main(args=None) -> None:
             msg.pose.pose.position.y,
             yaw_from_quaternion(q.x, q.y, q.z, q.w),
         )
+        latest_odom_v[0] = float(msg.twist.twist.linear.x)
+        odom_at[0] = time_mod.monotonic()
 
     def on_horizon(msg: Float32MultiArray) -> None:
         latest_horizon[0] = [float(v) for v in msg.data]
@@ -589,6 +593,8 @@ def main(args=None) -> None:
         v0 = out.points[0].longitudinal_velocity_mps
         vn = out.points[-1].longitudinal_velocity_mps
         a0 = out.points[0].acceleration_mps2
+        odv = latest_odom_v[0]
+        o_age = (now - odom_at[0]) * 1000.0 if odom_at[0] else -1.0
         if hz:
             hc = [max(0.0, v) for v in hz]
             s_h = 0.0
@@ -606,7 +612,8 @@ def main(args=None) -> None:
         node.get_logger().info(
             f"xfer #{published_count[0]} vp_a={vp_a if vp_a is not None else 'NA'} "
             f"a_age={a_age:.0f}ms h_age={h_age:.0f}ms {hinfo} "
-            f"v0={v0:.2f} vn={vn:.2f} traj_a0={a0:.2f}"
+            f"v0={v0:.2f} vn={vn:.2f} traj_a0={a0:.2f} "
+            f"odv={odv:.2f} o_age={o_age:.0f}ms"
         )
 
     node.create_subscription(Odometry, input_odom, on_odom, qos)
