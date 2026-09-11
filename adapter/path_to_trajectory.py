@@ -20,18 +20,17 @@ SERIALIZED_BYTE_BUDGET = 1300
 DEFAULT_TARGET_SPEED_MPS = 3.0
 DEFAULT_V_MIN_MPS = 1.0
 HORIZON_DT_SEC = 0.05
-# Actuation deadband compensation (m/s). CARLA static friction plus the
-# bridge map needs ~0.8 m/s of velocity demand to break away; 0.2 does
-# not move the car. This only floors the FIRST point when the VP schedule
-# rises from an exact-zero standstill — the ramp itself still comes 100%
-# from VP. It is a deadband fix, not a behavior decision.
-LAUNCH_FLOOR_MPS = 0.8
-# Schedule shows motion intent when its end exceeds this (m/s). Below it
-# (flat-zero schedule) the zeros are transcribed honestly so the SI
-# STOPPED hold engages. When in doubt we move: VP replans at ~7 Hz and
-# brakes a wrong launch within ~150 ms, while a false hold at zero
-# (stop point at the ego's feet) never self-corrects.
-MOTION_HN_MPS = 0.2
+# Spatial lead (m). Points are read S_LEAD ahead on the transcribed
+# schedule instead of at the ego's feet. The SI longitudinal target sits
+# decimeters ahead and the bridge map equilibrates at its velocity
+# demand, so commanding v(ego) ~= actual speed stalls (proven: 200 s
+# crawl at 0.3 m/s with a 1.4 m/s ramp on the table). Reading ahead
+# turns the ramp into a rising demand that bootstraps on grades, while
+# staying bounded by the schedule end (hn): it can only exceed actual
+# speed while the schedule rises, so runaway is structurally impossible.
+# A rising-from-zero schedule therefore launches with no special case,
+# and a stop schedule still transcribes zeros (SI stop machinery intact).
+S_LEAD_M = 1.0
 # Near-field arcs (m) always represented so SI's ~0.2 m lookahead target
 # lands on the transcribed ramp instead of a coarse downsample chord.
 NEAR_ARC_M = (0.25, 0.5, 1.0, 2.0)
@@ -431,7 +430,7 @@ def convert(
         hn = h[-1]
         s_knots = horizon_arc_lengths(h, horizon_dt_sec)
         for s in lengths:
-            v, t = sample_spatial(s_knots, h, s, hn, horizon_dt_sec)
+            v, t = sample_spatial(s_knots, h, s + S_LEAD_M, hn, horizon_dt_sec)
             speeds.append(v)
             times.append(t)
         t_h = max(horizon_dt_sec * (len(h) - 1), horizon_dt_sec)
@@ -441,19 +440,7 @@ def convert(
             fallback = vp_accel
         else:
             fallback = 0.0
-        launching = h[0] < 0.1 and hn > MOTION_HN_MPS
-        if launching and speeds:
-            # An exact zero under the ego reads as "stop line reached"
-            # to the SI stop search (stop_dist ~= 0 -> STOPPED forever),
-            # so a rising schedule must not start on an exact zero.
-            speeds[0] = max(speeds[0], LAUNCH_FLOOR_MPS)
-            times[0] = 0.0
         accels = profile_accelerations(speeds, times, fallback)
-        if launching and accels:
-            # Differentiating across the floor step would understate the
-            # launch demand; the schedule slope (== VP accel) is the
-            # honest feedforward here.
-            accels[0] = fallback
     else:
         for s in lengths:
             speed = cruise if cruise is not None else 0.0

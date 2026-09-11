@@ -131,26 +131,20 @@ class ConvertTests(unittest.TestCase):
         self.assertAlmostEqual(v, 2.0)
         self.assertGreater(t, 0.05)
 
-    def test_launch_ramp_from_rest(self):
-        # VP: 0 -> 1.425 m/s over 1 s at +1.5 m/s^2. The near field must
-        # carry the ramp (SI target lives <1 m ahead) and the far field
-        # must hold the last horizon speed.
+    def test_launch_reads_ahead(self):
+        # VP: 0 -> 1.425 m/s over 1 s at +1.5 m/s^2, all inside 0.7 m of
+        # travel. Reading 1 m ahead lands past the schedule end, so the
+        # first point holds the schedule end: a rising demand that breaks
+        # static friction with no special case, bounded by VP intent.
         path = sample_quadratic_path(0.0, 0.0, 0.0, x_max_m=20.0)
         horizon = [1.5 * 0.05 * i for i in range(20)]
         out = convert(path, Pose2D(0.0, 0.0, 0.0), speed_horizon=horizon)
         self.assertIsNotNone(out)
         assert out is not None
         speeds = [p.longitudinal_velocity_mps for p in out]
-        # Rising schedule from exact-zero standstill: first point floors
-        # at the actuation deadband (else the SI stop search parks on a
-        # zero under the ego forever); the ramp itself is transcribed.
-        self.assertAlmostEqual(speeds[0], 0.8)
+        self.assertAlmostEqual(speeds[0], horizon[-1])
         self.assertAlmostEqual(speeds[-1], horizon[-1])
-        near = [p for p in out if 0.0 < p.x < 1.0]
-        self.assertTrue(near, "ramp detail lost to downsampling")
-        self.assertGreater(max(p.longitudinal_velocity_mps for p in near), 0.2)
-        self.assertGreater(out[0].acceleration_mps2, 1.0)
-        self.assertLess(out[0].acceleration_mps2, 2.0)
+        self.assertLessEqual(max(speeds), max(horizon) + 1e-9)
         times = [p.time_from_start_sec for p in out]
         self.assertTrue(all(math.isfinite(t) for t in times))
         self.assertTrue(
@@ -169,23 +163,36 @@ class ConvertTests(unittest.TestCase):
         for p in out:
             self.assertAlmostEqual(p.longitudinal_velocity_mps, 0.0)
 
-    def test_braking_horizon_encodes_stop(self):
-        # VP braking 2.0 -> 0.0: the profile must reach exact zeros and
-        # stay there, with no feedforward left on the stop tail.
+    def test_braking_ramps_down(self):
+        # VP braking 8 -> 5 m/s: 1 m ahead on the falling schedule reads
+        # below current speed (decel demand, never above actual), no
+        # zeros anywhere, feedforward negative on the ramp.
+        path = sample_quadratic_path(0.0, 0.0, 0.0, x_max_m=20.0)
+        horizon = [8.0 - 0.15 * i for i in range(20)]
+        out = convert(
+            path, Pose2D(0.0, 0.0, 0.0), speed_horizon=horizon, vp_accel=-3.0
+        )
+        assert out is not None
+        speeds = [p.longitudinal_velocity_mps for p in out]
+        self.assertLess(speeds[0], 8.0)
+        self.assertGreater(speeds[0], horizon[-1])
+        self.assertNotIn(0.0, speeds)
+        self.assertLess(out[0].acceleration_mps2, -1.0)
+        self.assertLessEqual(max(speeds), max(horizon) + 1e-9)
+
+    def test_slow_stop_collapses_to_hold(self):
+        # VP stopping 2.0 -> 0.0 inside 0.7 m: 1 m ahead is past the
+        # schedule end, so the profile holds the (zero) end: an honest
+        # full stop with no feedforward left anywhere.
         path = sample_quadratic_path(0.0, 0.0, 0.0, x_max_m=20.0)
         horizon = [max(0.0, 2.0 - 0.15 * i) for i in range(14)] + [0.0] * 6
         out = convert(
             path, Pose2D(0.0, 0.0, 0.0), speed_horizon=horizon, vp_accel=-3.0
         )
         assert out is not None
-        speeds = [p.longitudinal_velocity_mps for p in out]
-        self.assertAlmostEqual(speeds[0], 2.0)
-        self.assertIn(0.0, speeds)
         for p in out:
-            if p.x > 1.0:
-                self.assertAlmostEqual(p.longitudinal_velocity_mps, 0.0)
-        self.assertLess(out[0].acceleration_mps2, -2.0)
-        self.assertAlmostEqual(out[-1].acceleration_mps2, 0.0)
+            self.assertAlmostEqual(p.longitudinal_velocity_mps, 0.0)
+            self.assertAlmostEqual(p.acceleration_mps2, 0.0)
 
     def test_cruise_horizon_is_flat(self):
         path = sample_quadratic_path(0.0, 0.0, 0.0, x_max_m=20.0)
@@ -205,9 +212,10 @@ class ConvertTests(unittest.TestCase):
         out = convert(path, Pose2D(0.0, 0.0, 0.0), speed_horizon=horizon)
         assert out is not None
         speeds = [p.longitudinal_velocity_mps for p in out]
-        # Rising from below the deadband: first point floors so the SI
-        # stop search cannot park on it, the rest stays transcribed.
-        self.assertAlmostEqual(speeds[0], 0.8)
+        # 1 m ahead is past this short schedule: hold the end, no zeros,
+        # no special case. (0.3 m/s may sit under the actuation deadband;
+        # that stalls safe, while a floor launched into bumpers.)
+        self.assertAlmostEqual(speeds[0], horizon[-1], places=2)
         self.assertNotIn(0.0, speeds)
 
     def test_configured_target_speed(self):
