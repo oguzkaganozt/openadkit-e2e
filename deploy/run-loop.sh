@@ -100,15 +100,26 @@ pkill -f "$ROOT/deploy/nodes/scenario.py" 2>/dev/null || true
 
 "${COMPOSE[@]}" up -d carla
 wait_for_carla
+# Shared DDS/mode infrastructure (no world handles; start once).
+"${COMPOSE[@]}" up -d domain-bridge operation-mode
+# Fresh world FIRST: scenario load_world wipes every actor, so anything
+# holding CARLA handles must (re)start after it. Always recreate (never
+# restart): a world wipe must also reset VP latch/odom/fusion state and
+# pick up rebuilt images, with clean per-run logs.
 "${COMPOSE[@]}" up -d --force-recreate scenario
 started_at="$(date --iso-8601=seconds)"
 wait_for_log openadkit-e2e-scenario "ego up" "CARLA scenario"
-"${COMPOSE[@]}" up -d
-"${COMPOSE[@]}" up -d --force-recreate si
+if python3 -c "import json,sys; sys.exit(0 if json.load(open('$ROOT/deploy/config/carla-rig.json')).get('lead_vehicle', {}).get('enabled') else 1)"; then
+  wait_for_log openadkit-e2e-scenario "lead on-lane" "lead vehicle"
+fi
+"${COMPOSE[@]}" up -d --force-recreate carla-bridge
 started_at="$(date --iso-8601=seconds)"
-"${COMPOSE[@]}" restart visionpilot adapter carla-bridge
+wait_for_log openadkit-e2e-carla-bridge "camera frame #" "bridge camera"
+"${COMPOSE[@]}" up -d --force-recreate adapter si visionpilot
+started_at="$(date --iso-8601=seconds)"
 wait_for_log openadkit-e2e-adapter "vehicle/lane_path + /localization/kinematic_state" "adapter subscribed"
-wait_for_log openadkit-e2e-adapter "published Trajectory #" "VP Path + adapter Trajectory"
+wait_for_log openadkit-e2e-adapter "xfer #" "VP Path + adapter Trajectory"
+wait_for_log openadkit-e2e-visionpilot "plan: tyre=" "VP planning"
 wait_for_log openadkit-e2e-carla-bridge "applied control #" "SI control"
 # PREVIEW_HOST wins; otherwise auto-detect the public IP (link-local EC2-style
 # metadata, then a public echo service), else fall back to local addresses.
