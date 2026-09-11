@@ -41,7 +41,10 @@ def carla_longitudinal(cmd_v: float, cmd_a: float, actual_v: float) -> tuple[flo
     if cmd_v <= STOP_SPEED_MPS and cmd_a <= 0.0:
         return 0.0, 0.4
     speed_error = cmd_v - actual_v
-    if speed_error < -0.4 or (cmd_a < 0.0 and speed_error < 0.0):
+    # An explicit SI decel demand (<= -0.5 m/s^2) brakes even before the
+    # velocity error turns negative (decelerating into a falling target);
+    # the threshold keeps regulation chatter on throttle.
+    if speed_error < -0.4 or cmd_a <= -0.5 or (cmd_a < 0.0 and speed_error < 0.0):
         return 0.0, min(1.0, max(-cmd_a * BRAKE_DECEL_GAIN, -speed_error * 0.5))
     throttle = (
         CRUISE_THROTTLE_PER_MPS * max(cmd_v, 0.0)
