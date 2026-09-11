@@ -70,32 +70,41 @@ hundreds of metres on the same spawn.
 Until that controller is a separate, working loop, A/B for integration is
 SI+nominal 3 m/s vs SI+VP speed intent — not vanilla VP steering.
 
-### Close-range lead loss: stops, then drives into the lead
+### Unstable lead perception: flicker mid-range, blindness close-range
 
-VisionPilot tracks a stopped lead at 8–30 m (brakes via IDM), but below
-~5 m both networks drop it: the bumper fills the frame, AutoDrive
-`flag_prob` falls under 0.40 and AutoSpeed reports no bbox. Fusion then
-reports 150 m free-road (`longitudinal_fusion.cpp`, no-confirm branch),
-IDM commands +1.5 m/s², and the pipeline — which transcribes VP intent
-1:1 — honestly executes it into the bumper. Measured on the Town04 lead
-rig (ground-truth gap + collision sensor): stop from 8.9 m/s, standstill
-at ~0 m true gap, then relaunch and contact at 0.8–1.9 m/s while VP
-reports free road or ghost 10–11 m single-frame re-confirms.
+VisionPilot's lead (CIPO) signal is range-dependent and nondeterministic
+across identical runs (measured confirm rates between ~3% and ~96% of
+frames on the Town04 lead rig, with ground-truth gap + collision sensor
++ per-frame fusion logs):
 
-Mitigation in tree: the CIPO latch on `feat/lane-path` feeds the
-planner a hold model (`min(coast, 2 m)` as stopped) while a
-confirmed-close track is lost — never raw flicker — so IDM holds with
-accel and horizon consistent, and the adapter's spatial transcription
-(`S_LEAD_M`) carries the stop to SI (smooth-stop engages). Verified
-2026-09-11 on the Town04 lead rig: approach at ~9 m/s, stop, short
-creep, hold at ~7 m true gap, **zero collisions**, SI in STOPPING hold.
-The latch arms after 10 solid frames and releases after 5 trusted
-confirms; single-frame ghosts can neither arm nor release it.
+- **30–70 m:** AutoDrive and AutoSpeed fuse (redundant). AutoDrive never
+  confirms below ~30 m (`flag_prob` stays under 0.40 all the way in).
+- **8–30 m:** AutoSpeed detector alone. Tracks, but flickers run to run,
+  and mono-depth overreads by ~+5–16 m mid-range.
+- **Below ~8 m:** both networks drop it — the bbox bottom (the homography
+  reference) exits the frame bottom (`y2=512`); the bumper fills the
+  frame. Fusion then reports 150 m free-road
+  (`longitudinal_fusion.cpp`, no-confirm branch), IDM commands
+  +1.5 m/s², and the pipeline — which transcribes VP intent 1:1 —
+  honestly executes it into the bumper (measured contacts at 0.8–5 m/s).
+- **Ghosts:** single-frame ~10–11 m re-confirms amid drops.
+- One run showed total blindness (zero confirms at any range); cause is
+  open (possibly model warmup — VP missed the first ~60 sim-s). Camera
+  frames were healthy daylight throughout (1 fps snapshots on record).
+
+Mitigation in tree: the CIPO latch on `feat/lane-path` (v7) arms on
+track *rate* (10/60 frames — flaky-but-real tracks arm, 1–2-frame
+ghosts cannot), feeds the planner a hold model (`min(coast, 2 m)` as
+stopped, honest coast outside 8 m — never raw flicker), releases on 5
+trusted + plausible confirms, and force-releases after 40 m of blind
+roll. Verified 2026-09-11: approach at ~9 m/s, stop, hold at ~7 m true
+gap, **zero collisions**, SI smooth-stop engaged.
 
 Consequence: the car now holds *short* instead of creeping to 2 m —
 the creep-to-2 m mission still needs real close-range detection
-(truncated-bbox handling or a proximity source), and no safety claim
-rests on this scenario until then (guard/MRM phase).
+(truncated-bbox handling, homography bias calibration, or a proximity
+source), and no safety claim rests on this scenario until then
+(guard/MRM phase).
 
 ### Lateral cold-start swerve at launch
 
