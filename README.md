@@ -1,5 +1,13 @@
 # openadkit-e2e
 
+> **Open issue:** VisionPilot's own steering loop is not a usable CARLA
+> baseline on this stack. VP publishes a usable lane path; SI follows that
+> path. VP's tyre-angle / accel commands, wired straight to the same bridge,
+> leave the lane within tens of metres (zero steer below 0.2 m/s, then ~0.002 rad
+> at ~1 m CTE). Official VP has the same controller. Do not treat vanilla
+> VP→CARLA as the gold A/B. Compare SI+fixed 3 m/s vs SI+VP speed intent.
+> See [Known limitations](#visionpilots-own-steering-is-not-a-carla-baseline).
+
 An Open AD Kit deployment for L2 closed-loop simulation:
 **VisionPilot plans, Autoware Safety Island controls, and CARLA simulates.**
 
@@ -47,6 +55,20 @@ Once the loop is ready, open the camera preview: <http://127.0.0.1:8090/>
 See the [deployment guide](deploy/README.md) for configuration, logs, and shutdown.
 
 ## Known limitations
+
+### VisionPilot's own steering is not a CARLA baseline
+
+The closed loop in this repo is **path → SI follower**, not VP actuators.
+A throwaway VP→`Control` shim on the current bridge (Town04 spawn 184)
+confirms: VP steering stays ~0 at launch (`v < 0.2 m/s` returns zeros in
+the lateral planner; same in official `autowarefoundation/vision_pilot`)
+and stays ~0.002 rad with ~1 m cross-track error after the car is on the
+shoulder. Snapping spawn to the lane waypoint does not change heading
+(already 89.9°). SI following `/vehicle/lane_path` at 3 m/s drives
+hundreds of metres on the same spawn.
+
+Until that controller is a separate, working loop, A/B for integration is
+SI+nominal 3 m/s vs SI+VP speed intent — not vanilla VP steering.
 
 ### Lane changes at Town04 splits and merges
 

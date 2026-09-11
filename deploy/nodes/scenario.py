@@ -69,6 +69,21 @@ def _setup_vehicle(world, config):
         default_idx,
     )
     spawn_pt = spawn_points[idx]
+    waypt = map_.get_waypoint(
+        spawn_pt.location, project_to_road=True, lane_type=carla.LaneType.Driving
+    )
+    if waypt is not None:
+        snapped = waypt.transform
+        snapped.location.z = max(snapped.location.z, spawn_pt.location.z) + 0.05
+        logging.info(
+            "snapped spawn %d to road %s lane %s yaw %.1f (was %.1f)",
+            idx,
+            waypt.road_id,
+            waypt.lane_id,
+            snapped.rotation.yaw,
+            spawn_pt.rotation.yaw,
+        )
+        spawn_pt = snapped
 
     return world.spawn_actor(bp, spawn_pt, attach_to=None)
 
