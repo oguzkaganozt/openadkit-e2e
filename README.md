@@ -192,4 +192,9 @@ implementation: rich motion reference, supervisor gate, and environmental superv
 | Path                                                                                                              | Contents                                                        |
 | ----------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
 | [`deploy/`](deploy/README.md)                                                                                     | Setup, build, Compose services, and runtime configuration       |
-| [`adapter/`](adapter/path_to_trajectory.py)                                                                       | Lane path → Autoware traj
+| [`adapter/`](adapter/path_to_trajectory.py)                                                                       | Lane path → Autoware trajectory conversion                      |
+| [`upstream/vision_pilot`](https://github.com/oguzkaganozt/autoware_vision_pilot/tree/feat/lane-path)               | VisionPilot fork that publishes `/vehicle/lane_path`            |
+| [`upstream/autoware-safety-island`](https://github.com/autowarefoundation/autoware-safety-island)                  | Pinned Safety Island submodule                                  |
+
+CARLA uses the `carlasim/carla:0.9.16` container image and its Python API.
+Native ROS integration (`--ros2`) is disabled.
