@@ -61,15 +61,16 @@ class ConvertTests(unittest.TestCase):
         out = convert([], ego)
         self.assertIsNotNone(out)
         assert out is not None
-        self.assertEqual(len(out), 2)
+        self.assertEqual(len(out), 3)
         self.assertEqual((out[0].x, out[0].y), (ego.x, ego.y))
         self.assertAlmostEqual(out[0].longitudinal_velocity_mps, 0.0)
         self.assertAlmostEqual(out[1].longitudinal_velocity_mps, 0.0)
+        self.assertAlmostEqual(out[2].longitudinal_velocity_mps, 0.0)
         self.assertGreater(out[1].x, out[0].x)
 
-    def test_stop_trajectory_has_two_points(self):
+    def test_stop_trajectory_has_three_points(self):
         out = stop_trajectory(Pose2D(1.0, 2.0, math.pi / 2.0))
-        self.assertEqual(len(out), 2)
+        self.assertEqual(len(out), 3)
         self.assertAlmostEqual(out[0].longitudinal_velocity_mps, 0.0)
 
     def test_straight_path_in_map(self):
@@ -90,7 +91,7 @@ class ConvertTests(unittest.TestCase):
 
     def test_fits_si_byte_budget(self):
         path = sample_quadratic_path(0.0, 0.0, 0.0, x_max_m=60.0)
-        out = convert(path, Pose2D(0.0, 0.0, 0.0))
+        out = convert(path, Pose2D(0.0, 0.0, 0.0), target_velocity_mps=3.0)
         self.assertIsNotNone(out)
         assert out is not None
         size = serialized_size_bytes(len(DEFAULT_FRAME_ID), len(out))
@@ -107,10 +108,25 @@ class ConvertTests(unittest.TestCase):
     def test_distant_path_starts_at_ego(self):
         path = [Pose2D(5.0, 0.0, 0.0), Pose2D(10.0, 0.0, 0.0)]
         ego = Pose2D(1.0, 2.0, 0.0)
-        out = convert(path, ego)
+        out = convert(path, ego, target_velocity_mps=3.0)
         self.assertIsNotNone(out)
         assert out is not None
         self.assertEqual((out[0].x, out[0].y), (ego.x, ego.y))
+
+    def test_no_horizon_is_stop(self):
+        path = sample_quadratic_path(0.0, 0.0, 0.0, x_max_m=10.0)
+        out = convert(path, Pose2D(0.0, 0.0, 0.0))
+        self.assertEqual(len(out), 3)
+        self.assertAlmostEqual(out[0].longitudinal_velocity_mps, 0.0)
+
+    def test_horizon_slows_along_path(self):
+        path = sample_quadratic_path(0.0, 0.0, 0.0, x_max_m=20.0)
+        horizon = [5.0 - 0.2 * i for i in range(20)]
+        out = convert(path, Pose2D(0.0, 0.0, 0.0), speed_horizon=horizon)
+        self.assertIsNotNone(out)
+        assert out is not None
+        self.assertGreater(out[0].longitudinal_velocity_mps, out[-1].longitudinal_velocity_mps)
+        self.assertAlmostEqual(out[0].longitudinal_velocity_mps, 5.0, places=1)
 
     def test_configured_target_speed(self):
         self.assertAlmostEqual(target_speed_mps(3.0), 3.0)

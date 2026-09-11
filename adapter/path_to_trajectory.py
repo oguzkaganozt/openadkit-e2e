@@ -16,9 +16,10 @@ from dataclasses import dataclass
 
 EXTENT_CAP_M = 25.0
 TARGET_POINT_COUNT = 13
-SERIALIZED_BYTE_BUDGET = 1200
+SERIALIZED_BYTE_BUDGET = 1300
 DEFAULT_TARGET_SPEED_MPS = 3.0
 DEFAULT_V_MIN_MPS = 1.0
+HORIZON_DT_SEC = 0.05
 DEFAULT_FRAME_ID = "map"
 
 CDR_ENCAPSULATION_BYTES = 4
@@ -30,6 +31,7 @@ CDR_TRAJECTORY_POINT_ALIGNMENT = 8
 
 DEFAULT_INPUT_PATH_TOPIC = "/vehicle/lane_path"
 DEFAULT_INPUT_ODOM_TOPIC = "/localization/kinematic_state"
+DEFAULT_INPUT_HORIZON_TOPIC = "/vehicle/speed_horizon"
 DEFAULT_OUTPUT_TOPIC = "/planning/scenario_planning/trajectory"
 
 
@@ -194,18 +196,35 @@ def downsample_indices(
 
 
 def stop_trajectory(ego: Pose2D) -> list[TrajectoryPoint]:
-    ahead = transform_to_odom(Pose2D(0.5, 0.0, 0.0), ego)
+    p1 = transform_to_odom(Pose2D(0.25, 0.0, 0.0), ego)
+    p2 = transform_to_odom(Pose2D(0.50, 0.0, 0.0), ego)
     return [
         TrajectoryPoint(ego.x, ego.y, ego.yaw, 0.0, 0.0, acceleration_mps2=-1.0),
-        TrajectoryPoint(ahead.x, ahead.y, ahead.yaw, 0.0, 0.5, acceleration_mps2=-1.0),
+        TrajectoryPoint(p1.x, p1.y, p1.yaw, 0.0, 0.25, acceleration_mps2=-1.0),
+        TrajectoryPoint(p2.x, p2.y, p2.yaw, 0.0, 0.50, acceleration_mps2=-1.0),
     ]
+
+
+def sample_horizon(horizon: list[float], t_sec: float, dt_sec: float = HORIZON_DT_SEC) -> float:
+    if not horizon or dt_sec <= 0.0:
+        return 0.0
+    if t_sec <= 0.0:
+        return max(0.0, horizon[0])
+    idx = t_sec / dt_sec
+    i = int(idx)
+    if i >= len(horizon) - 1:
+        return max(0.0, horizon[-1])
+    frac = idx - i
+    return max(0.0, horizon[i] * (1.0 - frac) + horizon[i + 1] * frac)
 
 
 def convert(
     path_points: list[Pose2D],
     ego: Pose2D,
     *,
-    target_velocity_mps: float = DEFAULT_TARGET_SPEED_MPS,
+    target_velocity_mps: float | None = None,
+    speed_horizon: list[float] | None = None,
+    horizon_dt_sec: float = HORIZON_DT_SEC,
     v_min_mps: float = DEFAULT_V_MIN_MPS,
     frame_id: str = DEFAULT_FRAME_ID,
     extent_cap_m: float = EXTENT_CAP_M,
@@ -213,6 +232,8 @@ def convert(
     byte_budget: int = SERIALIZED_BYTE_BUDGET,
 ) -> list[TrajectoryPoint] | None:
     if not path_points:
+        return stop_trajectory(ego)
+    if not speed_horizon and target_velocity_mps is None:
         return stop_trajectory(ego)
 
     world = [transform_to_odom(p, ego) for p in path_points]
@@ -235,7 +256,6 @@ def convert(
     if serialized_size_bytes(len(frame_id), len(indices)) > byte_budget:
         return None
 
-    speed = target_speed_mps(target_velocity_mps, v_min_mps)
     selected = [world[i] for i in indices]
     if math.hypot(selected[0].x - ego.x, selected[0].y - ego.y) > 0.5:
         selected = [ego] + selected
@@ -244,16 +264,39 @@ def convert(
         )
         selected = selected[:budget]
     lengths = cumulative_arc_lengths([(p.x, p.y) for p in selected])
-    return [
-        TrajectoryPoint(
-            x=p.x,
-            y=p.y,
-            yaw=p.yaw,
-            longitudinal_velocity_mps=speed,
-            time_from_start_sec=s / speed,
+    out: list[TrajectoryPoint] = []
+    t = 0.0
+    cruise = (
+        None
+        if speed_horizon
+        else target_speed_mps(target_velocity_mps or 0.0, v_min_mps)
+    )
+    for i, p in enumerate(selected):
+        if speed_horizon:
+            speed = sample_horizon(speed_horizon, t, horizon_dt_sec)
+        else:
+            speed = cruise if cruise is not None else 0.0
+        ds_next = (lengths[i + 1] - lengths[i]) if i + 1 < len(lengths) else 0.0
+        accel = 0.0
+        if speed_horizon and ds_next > 0.0:
+            v_next = sample_horizon(
+                speed_horizon, t + ds_next / max(speed, 0.1), horizon_dt_sec
+            )
+            dt_seg = ds_next / max(speed, 0.1)
+            accel = (v_next - speed) / dt_seg
+        out.append(
+            TrajectoryPoint(
+                x=p.x,
+                y=p.y,
+                yaw=p.yaw,
+                longitudinal_velocity_mps=speed,
+                time_from_start_sec=t,
+                acceleration_mps2=accel,
+            )
         )
-        for p, s in zip(selected, lengths)
-    ]
+        if i + 1 < len(lengths):
+            t += ds_next / max(speed, 0.1) if speed > 0.05 else 0.0
+    return out
 
 
 def main(args=None) -> None:
@@ -262,6 +305,7 @@ def main(args=None) -> None:
     from builtin_interfaces.msg import Duration
     from geometry_msgs.msg import Pose
     from nav_msgs.msg import Odometry, Path
+    from std_msgs.msg import Float32MultiArray
     from rclpy.executors import ExternalShutdownException
     from rclpy.qos import (
         QoSDurabilityPolicy,
@@ -279,10 +323,10 @@ def main(args=None) -> None:
     input_odom = node.declare_parameter(
         "input_odom_topic", DEFAULT_INPUT_ODOM_TOPIC
     ).value
-    output_topic = node.declare_parameter("output_topic", DEFAULT_OUTPUT_TOPIC).value
-    target_speed = node.declare_parameter(
-        "target_speed_mps", DEFAULT_TARGET_SPEED_MPS
+    input_horizon = node.declare_parameter(
+        "input_horizon_topic", DEFAULT_INPUT_HORIZON_TOPIC
     ).value
+    output_topic = node.declare_parameter("output_topic", DEFAULT_OUTPUT_TOPIC).value
     v_min = node.declare_parameter("v_min_mps", DEFAULT_V_MIN_MPS).value
     out_frame = node.declare_parameter("frame_id", DEFAULT_FRAME_ID).value
     extent_cap = node.declare_parameter("extent_cap_m", EXTENT_CAP_M).value
@@ -301,6 +345,7 @@ def main(args=None) -> None:
     )
     publisher = node.create_publisher(Trajectory, output_topic, qos)
     latest_ego: list[Pose2D | None] = [None]
+    latest_horizon: list[list[float] | None] = [None]
     published_count = [0]
 
     def on_odom(msg: Odometry) -> None:
@@ -310,6 +355,9 @@ def main(args=None) -> None:
             msg.pose.pose.position.y,
             yaw_from_quaternion(q.x, q.y, q.z, q.w),
         )
+
+    def on_horizon(msg: Float32MultiArray) -> None:
+        latest_horizon[0] = [float(v) for v in msg.data]
     def on_path(msg: Path) -> None:
         ego = latest_ego[0]
         if ego is None:
@@ -327,7 +375,7 @@ def main(args=None) -> None:
         points = convert(
             path_points,
             ego,
-            target_velocity_mps=target_speed,
+            speed_horizon=latest_horizon[0],
             v_min_mps=v_min,
             frame_id=out_frame,
             extent_cap_m=extent_cap,
@@ -360,16 +408,19 @@ def main(args=None) -> None:
         if published_count[0] == 1 or published_count[0] % 100 == 0:
             first = out.points[0].pose.position
             last = out.points[-1].pose.position
+            v0 = out.points[0].longitudinal_velocity_mps
             node.get_logger().info(
                 f"published Trajectory #{published_count[0]} ({len(out.points)} points, "
+                f"v0={v0:.2f} m/s, "
                 f"first=({first.x:.2f}, {first.y:.2f}), "
                 f"last=({last.x:.2f}, {last.y:.2f}))"
             )
 
     node.create_subscription(Odometry, input_odom, on_odom, qos)
     node.create_subscription(Path, input_path, on_path, qos)
+    node.create_subscription(Float32MultiArray, input_horizon, on_horizon, qos)
     node.get_logger().info(
-        f"{input_path} + {input_odom} -> {output_topic} "
+        f"{input_path} + {input_odom} + {input_horizon} -> {output_topic} "
         f"(≤{point_count} pts, {extent_cap} m, {byte_budget} B)"
     )
     try:
