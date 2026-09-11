@@ -36,8 +36,17 @@ BABBLE_DSTEER_RAD = 0.4
 BABBLE_DA_MPS2 = 6.0
 # Coupled actuation envelope (never clip steer/accel separately): command
 # is rejected when outside 1.2x the (longitudinal, lateral) ellipse.
-A_LON_MAX = 4.0
+# Asymmetric by necessity: SI's own emergency decel is -5.0, so a hard
+# stop response to a comfortable stop path is legitimate SI behavior, not
+# a fault (proven live: symmetric 4.0 turned every comfortable stop into
+# an emergency). Runaway throttle stays tightly bound at +4.0.
+A_LON_POS_MAX = 4.0
+A_LON_NEG_MAX = 6.0
 A_LAT_MAX = 3.0
+# Frame tag on the guard's own comfortable stop paths. Arrivals carrying
+# it are the guard's own DDS loopback and must not count as trajectory
+# input (proven live: they faked a "recovery" 0.8 s after a real loss).
+OWN_STOP_FRAME_ID = "guard_stop"
 ENVELOPE_MARGIN = 1.2
 V_MAX_MPS = 40.0
 STEER_MAX_RAD = 0.65
@@ -77,6 +86,12 @@ class TrajSnapshot:
     curvature: float = 0.0
     # True when every speed is (near) zero: a stop path, not a track.
     all_zero: bool = False
+    # True when this arrival is the guard's own stop path (frame tag).
+    own: bool = False
+
+
+def is_own_stop(frame_id: str) -> bool:
+    return frame_id == OWN_STOP_FRAME_ID
 
 
 @dataclass
@@ -125,6 +140,11 @@ class GuardPolicy:
             self._arrival_times.pop(0)
 
     def on_traj(self, traj: TrajSnapshot, now_ms: float) -> None:
+        if traj.own:
+            # Own comfortable stop path seen via DDS loopback: never
+            # input, never recovery evidence. (Inhibit verification only
+            # cares about non-zero arrivals, so dropping these is exact.)
+            return
         self._traj = traj
         self._traj_at = now_ms
 
@@ -160,7 +180,11 @@ class GuardPolicy:
         if abs(cmd.steer) > STEER_MAX_RAD:
             return "follower-steer-range"
         lat_acc = cmd.velocity * cmd.velocity * self._curvature()
-        lon = cmd.accel / A_LON_MAX
+        lon = (
+            cmd.accel / A_LON_POS_MAX
+            if cmd.accel >= 0.0
+            else cmd.accel / A_LON_NEG_MAX
+        )
         lat = lat_acc / A_LAT_MAX
         if lon * lon + lat * lat > ENVELOPE_MARGIN * ENVELOPE_MARGIN:
             return "envelope-violation"
@@ -365,6 +389,8 @@ def main(args=None) -> None:
         tick(publish=True)
 
     def on_traj(msg: Trajectory) -> None:
+        if is_own_stop(msg.header.frame_id):
+            return
         speeds = [float(p.longitudinal_velocity_mps) for p in msg.points]
         curvature = 0.0
         if len(msg.points) >= 3:
@@ -436,7 +462,7 @@ def main(args=None) -> None:
                 break
         out = Trajectory()
         out.header.stamp = node.get_clock().now().to_msg()
-        out.header.frame_id = "map"
+        out.header.frame_id = OWN_STOP_FRAME_ID
         if src is not None:
             for i, (x, y, z, qx, qy, qz, qw) in enumerate(src):
                 tp = TrajMsg()

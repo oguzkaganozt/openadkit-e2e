@@ -9,11 +9,13 @@ from guard import (
     FRESH,
     HOLD,
     INIT,
+    OWN_STOP_FRAME_ID,
     TRAJ_TIMEOUT_MS,
     EgoSnapshot,
     FollowerCmd,
     GuardPolicy,
     TrajSnapshot,
+    is_own_stop,
 )
 
 
@@ -175,6 +177,45 @@ class GuardTests(unittest.TestCase):
         base = self._drive_comfortable(g)
         out = g.step(base + FOLLOWER_TIMEOUT_MS + 100.0)
         self.assertEqual(out.state, EMERGENCY)
+
+    def test_hard_stop_response_is_not_a_fault(self):
+        # SI answers a sudden stop path with its own -5.0 emergency
+        # decel: legitimate, must not trip the envelope (proven live).
+        g = GuardPolicy()
+        live(g, 1000.0, v=16.0)
+        g.step(1010.0)
+        g.on_follower(cmd(1020.0, v=16.0, a=-5.0))
+        g.on_traj(traj(1020.0, v=16.0), 1020.0)
+        g.on_odom(ego(1020.0, v=16.0))
+        out = g.step(1020.0)
+        self.assertEqual(out.state, FRESH)
+
+    def test_runaway_throttle_still_trips(self):
+        g = GuardPolicy()
+        live(g, 1000.0, v=3.0)
+        g.step(1010.0)
+        g.on_follower(cmd(1020.0, v=3.0, a=5.0))
+        g.on_traj(traj(1020.0), 1020.0)
+        g.on_odom(ego(1020.0))
+        out = g.step(1020.0)
+        self.assertEqual(out.state, EMERGENCY)
+        self.assertEqual(out.reason, "envelope-violation")
+
+    def test_own_stop_loopback_is_ignored(self):
+        self.assertTrue(is_own_stop(OWN_STOP_FRAME_ID))
+        self.assertFalse(is_own_stop("map"))
+        g = GuardPolicy()
+        live(g, 1000.0)
+        g.step(1010.0)
+        # Only own stops arrive: trajectory must read stale, not fresh.
+        step_t = 1000.0 + TRAJ_TIMEOUT_MS + 10.0
+        g.on_traj(TrajSnapshot(stamp_ms=0.0, speeds=[0.0] * 5,
+                               all_zero=True, own=True), step_t - 500.0)
+        g.on_follower(cmd(step_t))
+        g.on_odom(ego(step_t))
+        out = g.step(step_t)
+        self.assertEqual(out.state, COMFORTABLE)
+        self.assertNotEqual(out.reason, "traj-recovered")
 
     def test_brake_cmd_freezes_last_steer(self):
         g = GuardPolicy()
