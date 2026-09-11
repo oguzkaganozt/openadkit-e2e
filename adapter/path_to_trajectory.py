@@ -265,46 +265,39 @@ def convert(
         selected = selected[:budget]
     lengths = cumulative_arc_lengths([(p.x, p.y) for p in selected])
     out: list[TrajectoryPoint] = []
-    t = 0.0
     cruise = (
         None
         if speed_horizon
         else target_speed_mps(target_velocity_mps or 0.0, v_min_mps)
     )
+    n = max(len(selected) - 1, 1)
+    horizon_span = (
+        max(len(speed_horizon) - 1, 1) * horizon_dt_sec if speed_horizon else 0.0
+    )
+    preview = 0.5 if speed_horizon else 0.0
+    t = 0.0
     for i, p in enumerate(selected):
         if speed_horizon:
+            t = preview + horizon_span * i / n
             speed = sample_horizon(speed_horizon, t, horizon_dt_sec)
-            # Horizon[0] is current ego speed. From rest the planned
-            # acceleration lives in later samples — use the next tick so
-            # SI does not treat a launching path as a stop.
-            if speed < 0.2 and max(speed_horizon) > 1.0:
-                # From rest, command VP's 0.5 s intent so the follower
-                # launches instead of tracking a 0 m/s first point.
-                speed = sample_horizon(speed_horizon, 0.5, horizon_dt_sec)
+            v_next = sample_horizon(
+                speed_horizon, t + horizon_dt_sec, horizon_dt_sec
+            )
+            accel = (v_next - speed) / horizon_dt_sec
         else:
             speed = cruise if cruise is not None else 0.0
-        ds_next = (lengths[i + 1] - lengths[i]) if i + 1 < len(lengths) else 0.0
-        accel = 0.0
-        if speed_horizon and ds_next > 0.0:
-            v_next = sample_horizon(
-                speed_horizon, t + ds_next / max(speed, 0.1), horizon_dt_sec
-            )
-            dt_seg = ds_next / max(speed, 0.1)
-            accel = (v_next - speed) / dt_seg
+            accel = 0.0
+            t = 0.0 if speed <= 0.0 else lengths[i] / speed
         out.append(
             TrajectoryPoint(
                 x=p.x,
                 y=p.y,
                 yaw=p.yaw,
                 longitudinal_velocity_mps=speed,
-                time_from_start_sec=t,
+                time_from_start_sec=max(0.0, t - preview),
                 acceleration_mps2=accel,
             )
         )
-        if i + 1 < len(lengths):
-            # Advance along the time horizon even from rest so later points
-            # pick up planned acceleration (horizon[0] is current ego speed).
-            t += ds_next / max(speed, 0.5)
     return out
 
 

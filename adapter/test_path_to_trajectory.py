@@ -135,7 +135,7 @@ class ConvertTests(unittest.TestCase):
         self.assertIsNotNone(out)
         assert out is not None
         self.assertGreater(out[0].longitudinal_velocity_mps, out[-1].longitudinal_velocity_mps)
-        self.assertAlmostEqual(out[0].longitudinal_velocity_mps, 5.0, places=1)
+        self.assertAlmostEqual(out[0].longitudinal_velocity_mps, 3.0, places=1)
 
     def test_configured_target_speed(self):
         self.assertAlmostEqual(target_speed_mps(3.0), 3.0)
