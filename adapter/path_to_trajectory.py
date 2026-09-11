@@ -274,6 +274,13 @@ def convert(
     for i, p in enumerate(selected):
         if speed_horizon:
             speed = sample_horizon(speed_horizon, t, horizon_dt_sec)
+            # Horizon[0] is current ego speed. From rest the planned
+            # acceleration lives in later samples — use the next tick so
+            # SI does not treat a launching path as a stop.
+            if speed < 0.2 and max(speed_horizon) > 1.0:
+                # From rest, command VP's 0.5 s intent so the follower
+                # launches instead of tracking a 0 m/s first point.
+                speed = sample_horizon(speed_horizon, 0.5, horizon_dt_sec)
         else:
             speed = cruise if cruise is not None else 0.0
         ds_next = (lengths[i + 1] - lengths[i]) if i + 1 < len(lengths) else 0.0
@@ -411,9 +418,16 @@ def main(args=None) -> None:
             first = out.points[0].pose.position
             last = out.points[-1].pose.position
             v0 = out.points[0].longitudinal_velocity_mps
+            vn = out.points[-1].longitudinal_velocity_mps
+            hz = latest_horizon[0]
+            hinfo = (
+                f"h0={hz[0]:.2f} hn={hz[-1]:.2f} n={len(hz)}"
+                if hz
+                else "no-horizon"
+            )
             node.get_logger().info(
                 f"published Trajectory #{published_count[0]} ({len(out.points)} points, "
-                f"v0={v0:.2f} m/s, "
+                f"v0={v0:.2f} vn={vn:.2f} m/s {hinfo}, "
                 f"first=({first.x:.2f}, {first.y:.2f}), "
                 f"last=({last.x:.2f}, {last.y:.2f}))"
             )
