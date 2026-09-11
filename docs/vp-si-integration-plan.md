@@ -111,6 +111,10 @@ Build:
   1200 B including metadata; if the horizon needs more, raise the budget
   with measured fragmentation cost instead of silently crossing 1344 B.
   Keep a per-topic domain + serialized-size table.
+  - DECIDED: raise the trajectory budget to 1300 B, keep 13 points, embed
+    ~40 B of metadata (source ID, boot epoch + sequence, acquisition stamp,
+    validity deadline, reason/status) in the trajectory. Projected total
+    ~1212 B — under the 1344 B fragment limit with 132 B margin.
 - Use camera-time-aligned odometry; receiver clock for timeouts.
 - Add NPC cars, or limit tests to empty roads explicitly.
 - Set low-speed test limit. Derive the age timeout from measurement,
