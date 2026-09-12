@@ -115,6 +115,51 @@ per-container logs rotated before collection, so the dip onsets lack
 xfer traces — compose now pins `max-size/max-file` logging so a full
 run's evidence survives (applies from the next recreate).
 
+### Phase 2 guard: `feat/guard-fallback` branch
+
+Design (from `docs/vp-si-integration-plan.md`, sim scope): a guard node
+in domain 2 sits between the SI follower and the bridge —
+`follower Control → guard → approved Control → bridge` — with states
+`INIT → FRESH ↔ COMFORTABLE → EMERGENCY → HOLD → FRESH`.
+Comfortable publishes a zero-speed stop path (tagged `guard_stop`) for
+the follower to execute while asserting `guard/inhibit_trajectory` so
+the adapter falls silent; emergency writes the brake Control directly.
+Comfortable steps down to emergency only, HOLD needs an explicit
+`re_enable` pulse plus a cleared fault, and the coupled steer/accel
+envelope rejects commands outside 1.2x (+4.0/−6.0 m/s² lon, 3.0 lat).
+Enforcement is routing, not audit: `bridge-config.yaml` carries only
+the guard topics, and `deploy/check-guard-routing.sh` (run by
+`run-loop.sh` before SI starts) fails the run otherwise.
+
+Fault-injection results, Town04 empty rig, all zero-collision:
+
+| test | fault | guard answer | outcome |
+|---|---|---|---|
+| T1 pass-through | none | FRESH 46 s incl. 19 m/s + curves | untouched; then live fork save (below) |
+| T2 adapter kill @16 m/s | traj stale, follower live | COMFORTABLE `stale-traj` | revive → FRESH, motion resumes |
+| T3 SI kill @16 m/s | follower stale | EMERGENCY `stale-follower` | stop dead-center in ~2.5 s → HOLD; revive + re-enable → FRESH, motion resumes |
+| T4 NaN spoof on follower topic | invalid command | EMERGENCY `invalid-follower` | stop → HOLD → re-enable → FRESH |
+| T5 guard kill @3 m/s | approved-output loss | bridge 0.5 s timeout → brake | 3 m stop, on-lane; guard restart → FRESH, motion resumes |
+
+Live-fire saves (deterministic fork at ~620 m, same place that beached
+run A): T1 stopped on-road from 19 m/s on `envelope-violation`
+(four runs, same spot, zero contacts vs run A's guardrail). Two
+transient traj stalls recovered via `traj-recovered` without stopping.
+
+Bugs the tests caught and fixed the same night (all with regression
+tests, 50 green): guard's own stop path faking a recovery via DDS
+loopback (frame tag + ignore); symmetric envelope turning comfortable
+stops into emergencies (SI brakes at −5.0 legitimately); stale babble
+baseline re-tripping a legitimate release; baseline clearing
+deadlocking a startup in HOLD (`no-follower-yet`).
+
+Honest boundaries: re-enable into a still-live fault is accepted on
+instantaneous checks and re-trips within 0.2 s with zero motion — the
+loop is stable-safe but not predictive. A wrong-but-valid path (the
+fork yank itself) is stopped by the envelope at speed, but
+same-chain checks cannot confirm perception truth — that stays
+Phase 3 work. No crash-avoidance claim here.
+
 ### Unstable lead perception: flicker mid-range, blindness close-range
 
 VisionPilot's lead (CIPO) signal is range-dependent and nondeterministic
