@@ -23,7 +23,7 @@ driver, it is the emergency answer: stop and hold.
 
 Code:
 
-- [Path-to-trajectory adapter](../adapter/path_to_trajectory.py)
+- [Path-to-trajectory adapter](../deploy/nodes/path_to_trajectory.py)
 - [CARLA bridge](../deploy/nodes/carla_bridge.py)
 - [DDS routing](../deploy/config/bridge-config.yaml)
 - [Compose](../deploy/docker-compose.yaml)
@@ -216,7 +216,7 @@ No sideways avoidance planner in this plan. VP has none either.
 | --- | --- |
 | VP fork | Fix lead-speed, timestamped horizon export |
 | SI fork | Ingress, guard, fallback; follower role unchanged |
-| `adapter/` | Rich reference, valid stops, tests |
+| `deploy/nodes/path_to_trajectory.py` | Rich reference, valid stops |
 | `carla_bridge.py` | Approved input only, watchdog, real applied feedback |
 | `bridge-config.yaml` | Domains, routing, publisher lock |
 | Compose / scripts | Startup block until ready, pinned versions |

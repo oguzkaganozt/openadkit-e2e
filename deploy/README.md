@@ -132,11 +132,11 @@ bridged back to domain 1 and applied by the CARLA bridge.
 Run adapter tests without ROS:
 
 ```bash
-python3 -m unittest discover -s adapter -v
+python3 -m unittest discover -s tests -v
 ```
 
 For an SI-only run, omit `--profile vp` from Compose startup. In a ROS 2 Humble
-environment with `ROS_DOMAIN_ID=1`, run `python3 deploy/nodes/fake_path.py`
+environment with `ROS_DOMAIN_ID=1`, run `python3 tests/fake_path.py`
 to feed a synthetic path to the adapter.
 
 To rebuild Safety Island directly in its build environment:

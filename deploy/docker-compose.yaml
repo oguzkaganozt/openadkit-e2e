@@ -44,13 +44,12 @@ services:
     environment:
       - CRUISE_OVERRIDE_MPS=${CRUISE_OVERRIDE_MPS:-0.0}
     volumes:
-      - ../adapter:/opt/adapter:ro
+      - ./nodes:/opt/nodes:ro
       - ./config/cyclonedds.xml:/autoware/cyclonedds.xml:ro
-    working_dir: /opt/adapter
     command: >
       bash -lc "source /opt/ros/$${ROS_DISTRO}/setup.bash &&
       source /opt/autoware/setup.bash &&
-      python3 /opt/adapter/path_to_trajectory.py"
+      python3 /opt/nodes/path_to_trajectory.py"
     restart: on-failure
 
   carla-bridge:

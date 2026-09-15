@@ -273,7 +273,8 @@ implementation: rich motion reference, supervisor gate, and environmental superv
 | Path                                                                                                              | Contents                                                        |
 | ----------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
 | [`deploy/`](deploy/README.md)                                                                                     | Setup, build, Compose services, and runtime configuration       |
-| [`adapter/`](adapter/path_to_trajectory.py)                                                                       | Lane path → Autoware trajectory conversion                      |
+| [`deploy/nodes/`](deploy/nodes/path_to_trajectory.py)                                                             | Adapter, CARLA bridge, scenario                                 |
+| [`tests/`](tests/)                                                                                                | Adapter unit tests and SI-only fake path                        |
 | [`upstream/vision_pilot`](https://github.com/oguzkaganozt/autoware_vision_pilot/tree/feat/lane-path)               | VisionPilot fork that publishes `/vehicle/lane_path`            |
 | [`upstream/autoware-safety-island`](https://github.com/autowarefoundation/autoware-safety-island)                  | Pinned Safety Island submodule                                  |
 
