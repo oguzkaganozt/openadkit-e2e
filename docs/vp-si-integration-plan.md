@@ -152,28 +152,30 @@ health → availability → pick one → limit check → output
 [fresh follower | comfortable | emergency]
 ```
 
-Who writes what:
+Who writes what (all inside SI, same Control topic):
 
 - Fresh: follower writes `Control`.
-- Comfortable: fallback writes a stop path, follower executes it.
-  Allowed only while follower is live (fresh output inside its timeout,
-  finite values, limits ok) and ego is healthy. If the fault is the
-  follower itself (stale / babbling / invalid), skip comfortable and go
-  straight to emergency.
-- Emergency: fallback writes `Control` directly.
-  Used when follower path is unusable or comfortable activation fails.
+- Comfortable: SI publishes a brake `Control` (v=0) while the follower
+  is still live (traj stale/invalid, ego healthy). If the fault is the
+  follower itself (stale / babbling / invalid / envelope), skip
+  comfortable and go straight to emergency.
+- Emergency: SI publishes brake `Control` directly.
+- HOLD after stop. Explicit `/guard/re_enable` only.
 
 Build:
 
-- Guard + fallback in SI. Comfortable can only go down to emergency,
-  never back up while the fault stays.
+- Guard + fallback in SI (`guard_policy.hpp` in the controller).
+  Comfortable can only go down to emergency, never back up while the
+  fault stays. `MODE=run|autoware|stop` selects local follow, Autoware
+  operation-mode topic, or stop. `GUARD=0` disables a compiled-in
+  guard on POSIX only.
 - Hold after stop. Explicit re-enable only. If ego itself failed,
   stay held until ego is healthy + re-enable.
-- Bridge listens only to approved output. Enforcement, not just audit:
-  remove the raw follower `Control` input from Domain-1 routing in
-  `bridge-config.yaml` so the bridge cannot subscribe to it; startup check
-  + CI routing audit are the backstop. Sim scope only — real hardware needs
-  DDS security / ownership (separate spec).
+- Approved output is the follower topic: the guard sits before
+  DDS/CAN publish, so Domain-1 routing of
+  `/control/trajectory_follower/control_cmd` is the approved path.
+  SI process death is the bridge 0.5 s timeout. Sim scope only —
+  real hardware needs DDS security / ownership (separate spec).
 - Coupled limits only. Never clip steering and accel separately.
 - Check age with source stamp + sequence. Handle babbling, not only
   silence. Gate actuation state with the same staleness rule as telemetry:
@@ -182,8 +184,7 @@ Build:
 - Log wanted vs applied, reason, ages. Count false stops.
 
 Done when: normal driving passes through untouched, every fault
-(including babbling and guard-output loss) gives its defined answer,
-no hidden bypass in sim scope (routing + startup check + audit),
+(including babbling and SI-output loss) gives its defined answer,
 hold / re-enable proven.
 
 Still no crash-avoidance claim here. Same-chain checks cannot confirm

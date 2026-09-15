@@ -4,4 +4,5 @@
 	branch = feat/lane-path
 [submodule "upstream/autoware-safety-island"]
 	path = upstream/autoware-safety-island
-	url = https://github.com/autowarefoundation/autoware-safety-island.git
+	url = https://github.com/oguzkaganozt/autoware-safety-island.git
+	branch = feat/si-native-guard

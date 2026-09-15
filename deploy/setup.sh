@@ -37,9 +37,12 @@ while (($#)); do
   esac
 done
 
-# shellcheck source=compute.sh
-. "$(cd "$(dirname "$0")" && pwd)/compute.sh"
-resolve_compute
+case "${COMPUTE:-auto}" in
+  auto)
+    if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then COMPUTE=gpu; else COMPUTE=cpu; fi ;;
+  cpu|gpu) ;;
+  *) echo "Unknown COMPUTE mode: $COMPUTE (use auto, cpu, or gpu)" >&2; exit 2 ;;
+esac
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || {

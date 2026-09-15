@@ -1,18 +1,7 @@
 name: safety_island_bridge
 topics:
-  # Phase 2 enforcement: the ONLY Control crossing into domain 1 is the
-  # guard-approved one. The raw follower output stays in domain 2 where
-  # just the guard and SI see it.
-  control/guard/control_cmd:
+  control/trajectory_follower/control_cmd:
     type: autoware_control_msgs/msg/Control
-    from_domain: 2
-    to_domain: 1
-  guard/inhibit_trajectory:
-    type: std_msgs/msg/Bool
-    from_domain: 2
-    to_domain: 1
-  guard/state:
-    type: std_msgs/msg/String
     from_domain: 2
     to_domain: 1
   vehicle/status/steering_status:
@@ -33,5 +22,9 @@ topics:
     to_domain: 2
   localization/acceleration:
     type: geometry_msgs/msg/AccelWithCovarianceStamped
+    from_domain: 1
+    to_domain: 2
+  guard/re_enable:
+    type: std_msgs/msg/Float64
     from_domain: 1
     to_domain: 2

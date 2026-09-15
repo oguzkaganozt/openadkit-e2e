@@ -68,9 +68,12 @@ done
   exit 2
 }
 
-# shellcheck source=compute.sh
-. "$DEPLOY/compute.sh"
-resolve_compute
+case "${COMPUTE:-auto}" in
+  auto)
+    if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then COMPUTE=gpu; else COMPUTE=cpu; fi ;;
+  cpu|gpu) ;;
+  *) echo "Unknown COMPUTE mode: $COMPUTE (use auto, cpu, or gpu)" >&2; exit 2 ;;
+esac
 export COMPUTE
 echo "Compute mode: $COMPUTE"
 VP_IMAGE="visionpilot:${COMPUTE}-ros2"

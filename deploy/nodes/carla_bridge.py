@@ -101,10 +101,7 @@ class CarlaBridge(Node):
         super().__init__("carla_bridge")
         self.declare_parameter("carla_host", "127.0.0.1")
         self.declare_parameter("carla_port", 2000)
-        # Phase 2: the bridge consumes ONLY the guard-approved Control.
-        # The raw follower topic is not routed (see bridge-config.yaml and
-        # check-guard-routing.sh).
-        self.declare_parameter("control_topic", "/control/guard/control_cmd")
+        self.declare_parameter("control_topic", "/control/trajectory_follower/control_cmd")
         self.declare_parameter("role_name", "hero")
         self.declare_parameter("camera_role", "main_cam")
         host = self.get_parameter("carla_host").value

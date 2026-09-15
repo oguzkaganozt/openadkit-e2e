@@ -120,7 +120,9 @@ Inputs are bridged from domain 1 to domain 2:
 | `/localization/kinematic_state`          | `nav_msgs/msg/Odometry`                     | CARLA bridge                    |
 | `/localization/acceleration`             | `geometry_msgs/msg/AccelWithCovarianceStamped` | CARLA bridge                 |
 | `/vehicle/status/steering_status`        | `autoware_vehicle_msgs/msg/SteeringReport`  | CARLA bridge, measured steering |
-| `/system/operation_mode/state`           | `autoware_adapi_v1_msgs/msg/OperationModeState` | `AUTONOMOUS` stub           |
+
+SI run mode: `MODE=run|autoware|stop` (default `run`). `autoware` follows
+`/system/operation_mode/state`.
 
 Output: `/control/trajectory_follower/control_cmd` (`autoware_control_msgs/msg/Control`),
 bridged back to domain 1 and applied by the CARLA bridge.
