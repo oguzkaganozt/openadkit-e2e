@@ -212,6 +212,9 @@ class CarlaBridge(Node):
                 bp.set_attribute("image_size_y", "1280")
                 bp.set_attribute("fov", "50")
                 bp.set_attribute("sensor_tick", "0.1")
+                bp.set_attribute("enable_postprocess_effects", "true")
+                bp.set_attribute("motion_blur_intensity", "0.0")
+                bp.set_attribute("gamma", "2.2")
                 tf = carla.Transform(
                     carla.Location(x=1.544, y=0.0243, z=2.116),
                     carla.Rotation(pitch=-0.11, yaw=-0.23, roll=-0.1),

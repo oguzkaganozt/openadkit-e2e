@@ -271,6 +271,7 @@ def main(args):
         client.load_world("Town04")
 
         world = client.get_world()
+        world.set_weather(carla.WeatherParameters.ClearNoon)
 
         # Synchronous mode: this client explicitly drives the sim clock via world.tick(),
         # so each step advances by exactly fixed_delta_seconds. This removes the

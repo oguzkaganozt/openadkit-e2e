@@ -30,6 +30,7 @@ services:
     command: >
       bash CarlaUE4.sh -nosound
       -RenderOffScreen
+      -quality-level=Epic
       -carla-rpc-port=2000
     restart: on-failure
 

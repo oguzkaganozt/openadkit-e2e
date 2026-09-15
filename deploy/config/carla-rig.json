@@ -11,7 +11,10 @@
         "image_size_x": 1920,
         "image_size_y": 1280,
         "fov": 50,
-        "sensor_tick": 0.1
+        "sensor_tick": 0.1,
+        "enable_postprocess_effects": "true",
+        "motion_blur_intensity": "0.0",
+        "gamma": "2.2"
       }
     },
     {
