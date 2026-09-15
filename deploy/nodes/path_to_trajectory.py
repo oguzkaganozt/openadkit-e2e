@@ -5,7 +5,7 @@ follower wants autoware_planning_msgs/Trajectory in the same frame as
 odometry, small enough to cross DDS without fragmentation.
 
 SI packet budget matches Open AD Kit traj_relay (hardware-validated):
-13 points, 25 m extent, 1200 B serialized. ROS imports stay in main() so
+13 points, 25 m extent, 1300 B serialized. ROS imports stay in main() so
 the functions below test without a ROS install.
 """
 
@@ -236,17 +236,20 @@ def ingress_reason(
     horizon_at_ms: float,
     odom_at_ms: float,
     stale_ms: float = STALE_INPUT_MS,
+    require_horizon: bool = True,
 ) -> str:
     """Why the latest input must not be trusted, or "" when fresh.
 
     Pure policy: no sequence exists on this wire (Float32MultiArray has
     no seq field), so arrival age is the only staleness signal. A stale
     or missing horizon/odom maps to an explicit stop downstream.
+    CRUISE_OVERRIDE_MPS skips the horizon checks only.
     """
-    if horizon_at_ms <= 0.0:
-        return "no-horizon-yet"
-    if now_ms - horizon_at_ms > stale_ms:
-        return "stale-horizon"
+    if require_horizon:
+        if horizon_at_ms <= 0.0:
+            return "no-horizon-yet"
+        if now_ms - horizon_at_ms > stale_ms:
+            return "stale-horizon"
     if odom_at_ms <= 0.0:
         return "no-odom-yet"
     if now_ms - odom_at_ms > stale_ms:
@@ -646,9 +649,12 @@ def main(args=None) -> None:
             return
         now_ms = now * 1000.0
         reason = ingress_reason(
-            now_ms, horizon_at[0] * 1000.0, odom_at[0] * 1000.0
+            now_ms,
+            horizon_at[0] * 1000.0,
+            odom_at[0] * 1000.0,
+            require_horizon=cruise_override <= 0.0,
         )
-        if reason and cruise_override <= 0.0:
+        if reason:
             publish_stop(ego, reason)
             return
         path_points = []

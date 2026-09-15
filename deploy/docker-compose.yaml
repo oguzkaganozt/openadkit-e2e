@@ -1,7 +1,7 @@
 # VP plans → adapter → SI follows → CARLA.
 # VP steering_cmd is not wired to CARLA.
 #
-#   ./run-loop.sh
+#   ./run.sh
 
 # Keep a full run's evidence: verbose nodes (adapter xfer, SI 30 Hz)
 # otherwise rotate away mid-campaign. ~10x a night run per service.

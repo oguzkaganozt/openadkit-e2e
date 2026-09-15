@@ -20,6 +20,14 @@ import time
 import carla
 
 
+def tm_speed_difference_percent(cruise_mps: float, speed_limit_kmh: float) -> float:
+    cruise = max(0.0, cruise_mps)
+    limit_mps = speed_limit_kmh / 3.6
+    if limit_mps <= 1e-6:
+        return 0.0 if cruise > 0.0 else 100.0
+    return 100.0 * (1.0 - cruise / limit_mps)
+
+
 def _check_versions(client):
     client_ver = client.get_client_version()
     server_ver = client.get_server_version()
@@ -198,7 +206,7 @@ def _in_front(hero_tf, loc):
     return (loc.x - hero_tf.location.x) * fwd.x + (loc.y - hero_tf.location.y) * fwd.y
 
 
-def _spawn_lead(world, hero, ahead_m, traffic_manager):
+def _spawn_lead(world, hero, ahead_m, traffic_manager, cruise_mps):
     map_ = world.get_map()
     hero_tf = hero.get_transform()
     wp0 = map_.get_waypoint(
@@ -222,10 +230,16 @@ def _spawn_lead(world, hero, ahead_m, traffic_manager):
         return None
     actor.set_autopilot(True, traffic_manager.get_port())
     traffic_manager.auto_lane_change(actor, False)
-    traffic_manager.vehicle_percentage_speed_difference(actor, 50)
+    limit_kmh = float(wp.get_speed_limit())
+    tm_pct = tm_speed_difference_percent(cruise_mps, limit_kmh)
+    traffic_manager.vehicle_percentage_speed_difference(actor, tm_pct)
     logging.info(
-        "lead on-lane ~%.0fm ahead yaw=%.1f at (%.1f,%.1f) hero yaw=%.1f at (%.1f,%.1f) front=%.1f",
+        "lead on-lane ~%.0fm ahead cruise=%.1f m/s limit=%.1f km/h tm_pct=%.1f "
+        "yaw=%.1f at (%.1f,%.1f) hero yaw=%.1f at (%.1f,%.1f) front=%.1f",
         ahead_m,
+        cruise_mps,
+        limit_kmh,
+        tm_pct,
         tf.rotation.yaw,
         tf.location.x,
         tf.location.y,
@@ -305,12 +319,17 @@ def main(args):
         lead_t = 0.0
         if lead_cfg.get("enabled"):
             lead = _spawn_lead(
-                world, vehicle, lead_cfg.get("ahead_m", 30.0), traffic_manager
+                world,
+                vehicle,
+                lead_cfg.get("ahead_m", 30.0),
+                traffic_manager,
+                float(lead_cfg.get("cruise_mps", 5.0)),
             )
             if lead is not None:
                 npc_vehicles.append(lead)
-        else:
-            npc_vehicles = _setup_npc_traffic(world, traffic_manager, config, hero_idx)
+        npc_vehicles.extend(
+            _setup_npc_traffic(world, traffic_manager, config, hero_idx)
+        )
 
         if args.autopilot:
             vehicle.set_autopilot(True)
@@ -336,7 +355,10 @@ def main(args):
                     if abs(lead_t - cruise_s) < 0.08:
                         logging.info("lead braking now (t=%.1fs)", lead_t)
                         lead.set_autopilot(False)
-                    ctrl = carla.VehicleControl(throttle=0.0, brake=0.8)
+                    held_steer = lead.get_control().steer
+                    ctrl = carla.VehicleControl(
+                        throttle=0.0, brake=0.8, steer=held_steer
+                    )
                     lead.apply_control(ctrl)
 
             world.tick()

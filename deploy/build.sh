@@ -182,12 +182,12 @@ echo "Pulling runtime images and building the domain bridge..."
 
 echo "Build complete ($COMPUTE mode)."
 if $RUN_AFTER; then
-  exec "$DEPLOY/run-loop.sh"
+  exec "$DEPLOY/run.sh"
 fi
 if [[ "$COMPUTE" == "cpu" ]]; then
   echo "Start the CPU loop with:"
-  echo "  VISIONPILOT_IMAGE=visionpilot:cpu-ros2 VISIONPILOT_RUNTIME=runc $DEPLOY/run-loop.sh"
-  echo "(run-loop.sh applies these automatically when no GPU is detected)"
+  echo "  VISIONPILOT_IMAGE=visionpilot:cpu-ros2 VISIONPILOT_RUNTIME=runc $DEPLOY/run.sh"
+  echo "(run.sh applies these automatically when no GPU is detected)"
 else
-  echo "Start with: $DEPLOY/run-loop.sh"
+  echo "Start with: $DEPLOY/run.sh"
 fi

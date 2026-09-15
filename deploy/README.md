@@ -25,7 +25,7 @@ builds the DDS domain bridge. Add `--run` to start the loop after building.
 ## Start, inspect, and stop
 
 ```bash
-./deploy/run-loop.sh
+./deploy/run.sh
 ```
 
 The script starts the full stack and checks that paths, trajectories, and control
@@ -67,7 +67,7 @@ which uses the GPU when `nvidia-smi` works). Flags are shorthand:
 ```bash
 ./deploy/setup.sh --cpu
 ./deploy/build.sh --dds-interface ens3 --cpu
-./deploy/run-loop.sh --cpu
+./deploy/run.sh --cpu
 ```
 
 CPU mode builds `visionpilot:cpu-ros2` and runs it with the `runc` runtime
@@ -88,7 +88,7 @@ On a GPU host, build once for CPU and pin CARLA to NVIDIA at run time:
 ```bash
 ./deploy/build.sh --dds-interface ens3 --cpu
 VISIONPILOT_IMAGE=visionpilot:cpu-ros2 VISIONPILOT_RUNTIME=runc \
-VISIONPILOT_CONF=vision_pilot.cpu.conf CARLA_RUNTIME=nvidia ./deploy/run-loop.sh
+VISIONPILOT_CONF=vision_pilot.cpu.conf CARLA_RUNTIME=nvidia ./deploy/run.sh
 ```
 
 Verified: 10 Hz camera, ~2.5 Hz CPU planning, trajectory + SI control nominal.
@@ -96,10 +96,15 @@ Verified: 10 Hz camera, ~2.5 Hz CPU planning, trajectory + SI control nominal.
 ## Runtime reference
 
 - **Adapter:** converts `/vehicle/lane_path` from `base_link` to a `map`
-  trajectory, targeting 3 m/s with up to 13 points, a 25 m extent budget, and ≤1200 B.
-- **Stop behavior:** an empty path produces a 0 m/s trajectory. The CARLA bridge
-  drops control commands older than 0.5 s, and stops publishing ego telemetry
-  when the latest CARLA sample is older than 0.2 s instead of republishing it.
+  trajectory and transcribes `/vehicle/speed_horizon` (up to 13 points, 25 m,
+  ≤1300 B). Set `CRUISE_OVERRIDE_MPS` (for example `3.0`) to ignore the horizon
+  and drive that constant speed instead.
+- **Stop behavior:** empty path, stale/missing horizon or odom, or a 1 s path
+  watchdog each produce a 0 m/s trajectory. Override still requires fresh odom.
+  The CARLA bridge drops control commands older than 0.5 s, and stops publishing
+  ego telemetry when the latest CARLA sample is older than 0.2 s instead of
+  republishing it. Steering status is the last measured wheel angle, or 0
+  until the first successful read (SI will not control without one report).
 - **CARLA bridge:** uses Python RPC on port 2000 and maps Safety Island's velocity
   and acceleration commands to throttle using feedforward and speed error.
 - **Domains:** VisionPilot (ROS 2 Jazzy, FastDDS) and the adapter (ROS 2 Humble,
@@ -129,7 +134,7 @@ bridged back to domain 1 and applied by the CARLA bridge.
 
 ## Development
 
-Run adapter tests without ROS:
+Run adapter and CARLA-mapping tests without ROS:
 
 ```bash
 python3 -m unittest discover -s tests -v

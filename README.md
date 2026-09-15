@@ -43,14 +43,14 @@ Run these commands from the repository root:
 ./deploy/setup.sh
 # Log out and back in if setup asks you to.
 ./deploy/build.sh --dds-interface ens3
-./deploy/run-loop.sh
+./deploy/run.sh
 ```
 
 Replace `ens3` with your multicast-capable network interface. The build script
 initializes the required submodules and builds the stack.
 
 Once the loop is ready, open the camera preview: <http://127.0.0.1:8090/>
-(On a remote host, use the public-IP link printed by `run-loop.sh`.)
+(On a remote host, use the public-IP link printed by `run.sh`.)
 
 See the [deployment guide](deploy/README.md) for configuration, logs, and shutdown.
 
@@ -101,7 +101,7 @@ path, bad shape, or no Path at all for 1 s (watchdog) each publish an
 explicit zero-speed trajectory with a counted reason
 (`stop #N reason=...`), and the watchdog clears the zombie horizon so
 motion cannot resume without fresh input. Startup hold falls out of the
-same rule (`stop #1 reason=watchdog-no-path`, verified live). 33 unit
+same rule (`stop #1 reason=watchdog-no-path`, verified live). Unit
 tests cover the fault answers (late, dropped, restarted, bad shape;
 there is no sequence on this wire, so the policy is age-only by design).
 
@@ -265,8 +265,9 @@ implementation: rich motion reference, supervisor gate, and environmental superv
 - Parameterize the town: the scenario currently hardcodes `Town04`
   (`deploy/nodes/scenario.py`); make it configurable and validate additional
   maps and spawn points.
-- Extend NPC traffic scenarios beyond the current rig, which configures none
-  (`deploy/config/carla-rig.json`).
+- Extend NPC traffic beyond the default lead-plus-NPC rig
+  (`deploy/config/carla-rig.json`). Empty-road A/B runs use
+  `RIG_JSON=carla-rig-empty.json`.
 
 ## Repository
 

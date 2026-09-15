@@ -2,6 +2,7 @@
 """SI DDS ↔ CARLA RPC. VP steering_cmd is not used."""
 
 import math
+import os
 import threading
 import time
 from array import array
@@ -10,7 +11,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import carla
 import cv2
 import numpy as np
-import os
 import rclpy
 from autoware_control_msgs.msg import Control
 from autoware_vehicle_msgs.msg import SteeringReport
@@ -41,9 +41,6 @@ def carla_longitudinal(cmd_v: float, cmd_a: float, actual_v: float) -> tuple[flo
     if cmd_v <= STOP_SPEED_MPS and cmd_a <= 0.0:
         return 0.0, 0.4
     speed_error = cmd_v - actual_v
-    # An explicit SI decel demand (<= -0.5 m/s^2) brakes even before the
-    # velocity error turns negative (decelerating into a falling target);
-    # the threshold keeps regulation chatter on throttle.
     if speed_error < -0.4 or cmd_a <= -0.5 or (cmd_a < 0.0 and speed_error < 0.0):
         return 0.0, min(1.0, max(-cmd_a * BRAKE_DECEL_GAIN, -speed_error * 0.5))
     throttle = (
@@ -52,6 +49,11 @@ def carla_longitudinal(cmd_v: float, cmd_a: float, actual_v: float) -> tuple[flo
         + ACCEL_THROTTLE_GAIN * max(cmd_a, 0.0)
     )
     return max(0.0, min(MAX_THROTTLE, throttle)), 0.0
+
+
+def carla_steer(tire_angle_rad: float, max_steer_rad: float) -> float:
+    span = max_steer_rad if max_steer_rad > 1e-6 else 1.0
+    return max(-1.0, min(1.0, -tire_angle_rad / span))
 
 
 _jpeg = None
@@ -115,6 +117,8 @@ class CarlaBridge(Node):
         self._vehicle = None
         self._camera = None
         self._last_steer = 0.0
+        self._last_measured_steer = None
+        self._steer_fail_logged = False
         self._control_count = 0
         self._http_server = None
         self._lock = threading.Lock()
@@ -122,10 +126,10 @@ class CarlaBridge(Node):
         self._pending_ctrl = None
         self._pending_ctrl_at = 0.0
         self._ros_image = None
+        self._latest_frame = None
         self._sample = None
         self._actual_v = 0.0
         self._max_steer = None
-        self._preview_frame = None
         self._camera_count = 0
         self._camera_started = time.monotonic()
         # 1 Hz run-evidence snapshots (user asked: a picture every second
@@ -241,7 +245,14 @@ class CarlaBridge(Node):
             return
         if time.monotonic() - sample.get("t_monotonic", 0.0) > STALE_SAMPLE_TIMEOUT_SEC:
             return
-        last_steer = sample.get("steer", self._last_steer)
+        measured_steer = sample.get("steer")
+        if measured_steer is not None:
+            self._last_measured_steer = measured_steer
+            steer_report = measured_steer
+        elif self._last_measured_steer is not None:
+            steer_report = self._last_measured_steer
+        else:
+            steer_report = 0.0
         qx, qy, qz, qw = _quat_from_yaw(sample["yaw"])
         stamp = self.get_clock().now().to_msg()
 
@@ -272,7 +283,7 @@ class CarlaBridge(Node):
 
         steer = SteeringReport()
         steer.stamp = stamp
-        steer.steering_tire_angle = last_steer
+        steer.steering_tire_angle = steer_report
         self.steer_pub.publish(steer)
 
     def _carla_loop(self):
@@ -332,18 +343,24 @@ class CarlaBridge(Node):
                     self._sample = sample
                     self._actual_v = actual_v
             except RuntimeError as exc:
+                self._world = None
                 self._vehicle = None
                 self._camera = None
                 self._max_steer = None
+                self._last_measured_steer = None
                 self.get_logger().warn("hero became unavailable: %s" % exc)
             time.sleep(0.05)
 
-    def _measured_steer(self, vehicle) -> float:
+    def _measured_steer(self, vehicle):
         try:
             deg = vehicle.get_wheel_steer_angle(carla.VehicleWheelLocation.FL_Wheel)
+            self._steer_fail_logged = False
             return -math.radians(float(deg))
-        except Exception:
-            return self._last_steer
+        except Exception as exc:
+            if not self._steer_fail_logged:
+                self._steer_fail_logged = True
+                self.get_logger().warn("wheel steer unavailable: %s" % exc)
+            return None
 
     def _on_camera(self, image):
         try:
@@ -352,7 +369,7 @@ class CarlaBridge(Node):
             bgr = np.ascontiguousarray(arr[:, :, :3])
             with self._lock:
                 self._ros_image = (image.width, image.height, bgr)
-                self._preview_frame = bgr
+                self._latest_frame = bgr
             self._camera_count += 1
             if self._camera_count == 1 or self._camera_count % 50 == 0:
                 elapsed = time.monotonic() - self._camera_started
@@ -392,11 +409,8 @@ class CarlaBridge(Node):
         global _jpeg
         while not self._stop:
             with self._lock:
-                frame = self._preview_frame
-                self._preview_frame = None
+                frame = self._latest_frame
             if frame is None:
-                # 10 Hz preview: the tight 50 Hz loop starved the 1 Hz
-                # evidence snapshots of CPU (observed ~0.1 Hz snaps).
                 time.sleep(0.1)
                 continue
             try:
@@ -409,6 +423,7 @@ class CarlaBridge(Node):
                         _jpeg = buf.tobytes()
             except Exception as exc:
                 self.get_logger().error("preview: %s" % exc)
+            time.sleep(0.1)
 
     def _snap_loop(self):
         next_at = time.monotonic()
@@ -421,7 +436,7 @@ class CarlaBridge(Node):
             if not self._snap_dir:
                 continue
             with self._lock:
-                frame = self._preview_frame
+                frame = self._latest_frame
             if frame is None:
                 continue
             try:
@@ -457,8 +472,7 @@ class CarlaBridge(Node):
         if sample is None:
             return
         ctrl = carla.VehicleControl()
-        # Autoware uses positive-left; CARLA's normalized input is positive-right.
-        ctrl.steer = max(-1.0, min(1.0, -self._last_steer / max_steer))
+        ctrl.steer = carla_steer(self._last_steer, max_steer)
         acc = float(msg.longitudinal.acceleration)
         vel = float(msg.longitudinal.velocity)
         ctrl.throttle, ctrl.brake = carla_longitudinal(vel, acc, actual_v)

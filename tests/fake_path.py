@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-import math
-
 import rclpy
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Path
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
+from std_msgs.msg import Float32MultiArray
+
+HORIZON_MPS = 3.0
+HORIZON_SAMPLES = 20
 
 
 class FakePath(Node):
@@ -18,6 +20,9 @@ class FakePath(Node):
             durability=DurabilityPolicy.VOLATILE,
         )
         self.pub = self.create_publisher(Path, "/vehicle/lane_path", qos)
+        self.horizon_pub = self.create_publisher(
+            Float32MultiArray, "/vehicle/speed_horizon", qos
+        )
         self.create_timer(0.1, self._tick)
 
     def _tick(self):
@@ -32,6 +37,9 @@ class FakePath(Node):
             ps.pose.orientation.w = 1.0
             msg.poses.append(ps)
         self.pub.publish(msg)
+        horizon = Float32MultiArray()
+        horizon.data = [HORIZON_MPS] * HORIZON_SAMPLES
+        self.horizon_pub.publish(horizon)
 
 
 def main():

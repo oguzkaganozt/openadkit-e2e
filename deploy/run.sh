@@ -8,6 +8,7 @@ cd "$ROOT/deploy"
 RIG_JSON="${RIG_JSON:-carla-rig.json}"
 export RIG_JSON
 SI_BIN="$ROOT/upstream/autoware-safety-island/build/freertos-posix/actuation_freertos"
+CARLA_WHEEL="/tmp/carla-0.9.16-cp310-cp310-manylinux_2_31_x86_64.whl"
 COMPOSE=(docker compose --env-file config.env --profile vp)
 
 COMPUTE="${COMPUTE:-auto}"
@@ -22,7 +23,7 @@ while (($#)); do
       shift
       ;;
     -h|--help)
-      echo "Usage: ./deploy/run-loop.sh [--cpu|--gpu]"
+      echo "Usage: ./deploy/run.sh [--cpu|--gpu]"
       exit 0
       ;;
     *)
@@ -98,6 +99,15 @@ wait_for_carla() {
 if [[ ! -x "$SI_BIN" ]]; then
   echo "SI binary missing: $SI_BIN" >&2
   echo "Build first: $ROOT/deploy/build.sh --dds-interface <nic>" >&2
+  exit 1
+fi
+if [[ ! -f "$CARLA_WHEEL" ]]; then
+  echo "CARLA wheel missing or not a regular file: $CARLA_WHEEL" >&2
+  if [[ -d "$CARLA_WHEEL" ]]; then
+    echo "That path is a directory (Compose bind-mount of a missing file). Remove it and run deploy/build.sh." >&2
+  else
+    echo "Build first: $ROOT/deploy/build.sh --dds-interface <nic>" >&2
+  fi
   exit 1
 fi
 

@@ -308,6 +308,33 @@ class IngressTests(unittest.TestCase):
         for p in out:
             self.assertAlmostEqual(p.longitudinal_velocity_mps, 3.0)
 
+    def test_cruise_override_ignores_stale_horizon(self):
+        now = 5000.0
+        self.assertEqual(
+            ingress_reason(
+                now,
+                now - STALE_INPUT_MS - 1.0,
+                now - 50.0,
+                require_horizon=False,
+            ),
+            "",
+        )
+
+    def test_cruise_override_still_rejects_stale_odom(self):
+        now = 5000.0
+        self.assertEqual(
+            ingress_reason(
+                now, 0.0, now - STALE_INPUT_MS - 1.0, require_horizon=False
+            ),
+            "stale-odom",
+        )
+
+    def test_cruise_override_still_rejects_missing_odom(self):
+        self.assertEqual(
+            ingress_reason(5000.0, 0.0, 0.0, require_horizon=False),
+            "no-odom-yet",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
