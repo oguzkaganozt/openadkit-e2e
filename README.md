@@ -108,23 +108,18 @@ What this means:
 
 Both runs ended on VP lateral limits, not the pipeline.
 
-### Phase 1 ingress: stale input now answers with a stop
+### Phase 1 ingress: stop on bad input, silence on a horizon blip
 
-SI latches its last trajectory (`has_trajectory_` never clears), so a
-silent adapter would drive stale forever. The adapter now gates every
-input on age:
+SI latches its last trajectory (`has_trajectory_` never clears). The
+adapter gates input on age (`STALE_INPUT_MS=1000`, >3x the worst healthy
+270 ms sample):
 
-- Stale threshold: `STALE_INPUT_MS=1000` (>3x the worst healthy 270 ms
-  sample, not a copied 0.5 s).
-- These each publish an explicit zero-speed trajectory with a counted
-  reason (`stop #N reason=...`):
-  - stale / missing horizon or odom
-  - empty path, bad shape
-  - no Path at all for 1 s (watchdog)
-- The watchdog clears the zombie horizon, so motion cannot resume
-  without fresh input.
-- Startup hold falls out of the same rule
-  (`stop #1 reason=watchdog-no-path`, verified live).
+- Startup: no Path yet → 0 m/s stop (`watchdog-no-path`).
+- Explicit stop (`stop #N reason=...`): missing horizon, stale/missing
+  odom, empty path, bad shape.
+- Stale horizon, or Path silence after the first Path: publish nothing.
+  SI keeps the last trajectory. Replaying the last speed onto a new Path
+  is forbidden; a 1 s stop on a DDS blip latched the follower in STOPPED.
 - Unit tests cover late, dropped, restarted, and bad-shape inputs.
   There is no sequence on this wire, so the policy is age-only by design.
 
@@ -147,8 +142,10 @@ The output guard lives inside `actuation_freertos`
 (same policy as the retired Python prototype).
 
 - States: `INIT → FRESH ↔ COMFORTABLE → EMERGENCY → HOLD → FRESH`.
-- Comfortable and emergency both publish a brake Control on the existing
-  follower topic (`/control/trajectory_follower/control_cmd`).
+- Traj silent under 3 s stays FRESH (SI keeps the last plan). After 3 s,
+  COMFORTABLE publishes a mild decel (`a≈-0.8`, last speed, last steer).
+  Emergency publishes a hard brake (`v=0`, `a=-3`) on
+  `/control/trajectory_follower/control_cmd`. HOLD is emergency-only.
 - `HOLD` needs an explicit `/guard/re_enable` pulse (Float64 > 0.5)
   plus a cleared fault.
 - Coupled envelope: 1.2x of +4.0 / −6.0 m/s² longitudinal, 3.0 lateral.

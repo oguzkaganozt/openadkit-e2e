@@ -99,8 +99,10 @@ Verified: 10 Hz camera, ~2.5 Hz CPU planning, trajectory + SI control nominal.
   trajectory and transcribes `/vehicle/speed_horizon` (up to 13 points, 25 m,
   ≤1300 B). Set `CRUISE_OVERRIDE_MPS` (for example `3.0`) to ignore the horizon
   and drive that constant speed instead.
-- **Stop behavior:** empty path, stale/missing horizon or odom, or a 1 s path
-  watchdog each produce a 0 m/s trajectory. Override still requires fresh odom.
+- **Stop behavior:** empty path, missing horizon, or stale/missing odom
+  produce a 0 m/s trajectory. Stale horizon and mid-run Path silence stay
+  quiet so SI keeps the last trajectory. Startup with no Path yet is a
+  stop. Override still requires fresh odom.
   The CARLA bridge drops control commands older than 0.5 s, and stops publishing
   ego telemetry when the latest CARLA sample is older than 0.2 s instead of
   republishing it. Steering status is the last measured wheel angle, or 0

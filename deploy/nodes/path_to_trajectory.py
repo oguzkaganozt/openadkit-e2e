@@ -51,13 +51,13 @@ DEFAULT_INPUT_ACCEL_TOPIC = "/vehicle/throttle_cmd"
 DEFAULT_OUTPUT_TOPIC = "/planning/scenario_planning/trajectory"
 # Ingress staleness bound (ms). Healthy runs show horizon age 50-270 ms
 # (xfer h_age) and odom at 20 Hz, so 1000 ms is >3x the worst healthy
-# sample — not a copied 0.5 s. Anything older means VP (or the bridge
-# odom feed) is dead, and the answer is an explicit stop trajectory,
-# never silence: SI latches its last trajectory (has_trajectory_ never
-# clears), so silence would drive stale forever.
+# sample — not a copied 0.5 s. Stale/missing odom still stops. Stale
+# horizon is silence (SI keeps the last trajectory): replaying the last
+# speed on a new Path is forbidden.
 STALE_INPUT_MS = 1000.0
-# Watchdog period bound (s). If no fresh Path arrives at all (VP fully
-# dead), the on_path callback never fires, so a timer publishes the stop.
+# Startup hold (s). Before the first Path, a timer publishes stop.
+# After a Path has arrived, mid-run gaps stay silent so SI keeps the
+# last trajectory. A 1 s stop on DDS blips latched STOPPED.
 STOP_WATCHDOG_SEC = 1.0
 
 
@@ -241,8 +241,7 @@ def ingress_reason(
     """Why the latest input must not be trusted, or "" when fresh.
 
     Pure policy: no sequence exists on this wire (Float32MultiArray has
-    no seq field), so arrival age is the only staleness signal. A stale
-    or missing horizon/odom maps to an explicit stop downstream.
+    no seq field), so arrival age is the only staleness signal.
     CRUISE_OVERRIDE_MPS skips the horizon checks only.
     """
     if require_horizon:
@@ -262,10 +261,28 @@ def watchdog_due(
     last_path_at_s: float,
     period_s: float = STOP_WATCHDOG_SEC,
 ) -> bool:
-    """True when no fresh Path arrived within the watchdog period."""
+    """True when no Path has arrived yet (startup hold).
+
+    Mid-run silence is not a stop: SI already latches the last trajectory.
+    Publishing v=0 after a 1 s DDS gap put the follower in STOPPED with
+    no way back (keep-stop / steer-convergence).
+    """
     if last_path_at_s <= 0.0:
         return True
-    return now_s - last_path_at_s > period_s
+    return False
+
+
+def ingress_action(reason: str) -> str:
+    """What on_path does with an ingress_reason: go, stop, or silence.
+
+    Silence means publish nothing; SI already latches the last trajectory.
+    Never convert a new Path with a stale horizon (that would replay speed).
+    """
+    if not reason:
+        return "go"
+    if reason == "stale-horizon":
+        return "silence"
+    return "stop"
 
 
 def sample_horizon(horizon: list[float], t_sec: float, dt_sec: float = HORIZON_DT_SEC) -> float:
@@ -654,7 +671,10 @@ def main(args=None) -> None:
             odom_at[0] * 1000.0,
             require_horizon=cruise_override <= 0.0,
         )
-        if reason:
+        action = ingress_action(reason)
+        if action == "silence":
+            return
+        if action == "stop":
             publish_stop(ego, reason)
             return
         path_points = []
@@ -725,17 +745,11 @@ def main(args=None) -> None:
         )
 
     def on_watchdog() -> None:
-        # VP fully dead: no Path arrives, so on_path never fires. Publish
-        # the stop on a timer instead of going silent (SI would drive the
-        # last trajectory forever). Also clears the zombie horizon so
-        # motion cannot resume without a fresh Path alongside fresh input.
         now = time_mod.monotonic()
         ego = latest_ego[0]
         if ego is None:
             return
         if watchdog_due(now, path_at[0]):
-            latest_horizon[0] = None
-            horizon_at[0] = 0.0
             publish_stop(ego, "watchdog-no-path")
 
     node.create_subscription(Odometry, input_odom, on_odom, qos)
@@ -747,7 +761,7 @@ def main(args=None) -> None:
     node.get_logger().info(
         f"{input_path} + {input_odom} + {input_horizon} -> {output_topic} "
         f"(≤{point_count} pts, {extent_cap} m, {byte_budget} B, "
-        f"stale>{STALE_INPUT_MS:.0f}ms=stop, watchdog {STOP_WATCHDOG_SEC:.1f}s"
+        f"stale>{STALE_INPUT_MS:.0f}ms=stop, startup-hold until first path"
         + (
             ", cruise-override %.1f m/s" % cruise_override
             if cruise_override > 0.0

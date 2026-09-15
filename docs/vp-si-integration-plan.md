@@ -26,9 +26,11 @@ simulates. VP steering is not wired to CARLA.
 - Trajectory budget: 13 points, 25 m, ≤1300 B. Domain 2
   `MaxMessageSize 1400B` / `FragmentSize 1344B`. No extra metadata on the
   wire (`Float32MultiArray` has no sequence; ingress is arrival-age only).
-- Ingress lives in the adapter (SI latches `has_trajectory_`). Stale/missing
-  horizon or odom, empty path, bad shape, or a 1 s path watchdog each publish
-  a 3-point 0 m/s stop (`STALE_INPUT_MS=1000`, measured, not a copied 0.5 s).
+- Ingress lives in the adapter (SI latches `has_trajectory_`). Missing
+  horizon, stale/missing odom, empty path, or bad shape publish a 3-point
+  0 m/s stop (`STALE_INPUT_MS=1000`). Stale horizon and mid-run Path
+  silence do not publish (no speed replay; SI keeps the last trajectory).
+  Startup with no Path yet is a stop.
 - SI follower is unchanged (MPC + PID). Native guard is compiled into
   `actuation_freertos`: `INIT → FRESH ↔ COMFORTABLE → EMERGENCY → HOLD → FRESH`.
   `GUARD` / `MODE` as in the [main README](../README.md#phase-2-guard-native-in-safety-island).

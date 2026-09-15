@@ -16,6 +16,7 @@ from path_to_trajectory import (
     Pose2D,
     convert,
     horizon_arc_lengths,
+    ingress_action,
     ingress_reason,
     sample_quadratic_path,
     sample_spatial,
@@ -236,8 +237,8 @@ class ConvertTests(unittest.TestCase):
 
 
 class IngressTests(unittest.TestCase):
-    # Phase 1 fault policy: late / dropped / restarted / bad-shape input
-    # each maps to an explicit stop downstream, never silence.
+    # Phase 1: missing horizon / stale odom / empty or bad path stop.
+    # Stale horizon and mid-run Path silence stay quiet (SI latch).
 
     def test_fresh_input_is_trusted(self):
         self.assertEqual(ingress_reason(5000.0, 4950.0, 4960.0), "")
@@ -252,6 +253,14 @@ class IngressTests(unittest.TestCase):
             "stale-horizon",
         )
 
+    def test_stale_horizon_is_silence_not_replay(self):
+        self.assertEqual(ingress_action("stale-horizon"), "silence")
+        self.assertEqual(ingress_action(""), "go")
+        self.assertEqual(ingress_action("no-horizon-yet"), "stop")
+        self.assertEqual(ingress_action("stale-odom"), "stop")
+        self.assertEqual(ingress_action("empty-path"), "stop")
+        self.assertEqual(ingress_action("bad-shape"), "stop")
+
     def test_boundary_horizon_is_trusted(self):
         now = 5000.0
         self.assertEqual(
@@ -265,9 +274,9 @@ class IngressTests(unittest.TestCase):
             "stale-odom",
         )
 
-    def test_watchdog_fires_on_dropped_path(self):
-        self.assertTrue(watchdog_due(10.0, 5.0))
+    def test_watchdog_fires_before_first_path(self):
         self.assertTrue(watchdog_due(10.0, 0.0))
+        self.assertFalse(watchdog_due(10.0, 5.0))
 
     def test_watchdog_quiet_on_fresh_path(self):
         self.assertFalse(watchdog_due(10.0, 10.0 - STOP_WATCHDOG_SEC))

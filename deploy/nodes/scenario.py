@@ -230,7 +230,10 @@ def _spawn_lead(world, hero, ahead_m, traffic_manager, cruise_mps):
         return None
     actor.set_autopilot(True, traffic_manager.get_port())
     traffic_manager.auto_lane_change(actor, False)
-    limit_kmh = float(wp.get_speed_limit())
+    world.tick()
+    limit_kmh = float(actor.get_speed_limit())
+    if not 10.0 <= limit_kmh <= 150.0:
+        limit_kmh = 90.0
     tm_pct = tm_speed_difference_percent(cruise_mps, limit_kmh)
     traffic_manager.vehicle_percentage_speed_difference(actor, tm_pct)
     logging.info(
