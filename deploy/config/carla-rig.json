@@ -28,7 +28,13 @@
   ],
   "npc_vehicles": [
     {
-      "count": 3,
+      "count": 16,
+      "type": "vehicle.*",
+      "near_hero_m": 120,
+      "autopilot": true
+    },
+    {
+      "count": 30,
       "type": "vehicle.*",
       "autopilot": true
     }
@@ -36,7 +42,6 @@
   "lead_vehicle": {
     "enabled": true,
     "ahead_m": 30,
-    "cruise_mps": 5.0,
-    "cruise_s": 15.0
+    "cruise_mps": 5.0
   }
 }

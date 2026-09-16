@@ -28,6 +28,12 @@ def tm_speed_difference_percent(cruise_mps: float, speed_limit_kmh: float) -> fl
     return 100.0 * (1.0 - cruise / limit_mps)
 
 
+def lead_stop_due(lead_t: float, stop_after_s) -> bool:
+    if stop_after_s is None:
+        return False
+    return lead_t >= float(stop_after_s)
+
+
 def along_components(dx, dy, dz, fx, fy, fz):
     along = dx * fx + dy * fy + dz * fz
     center = math.hypot(dx, dy)
@@ -179,45 +185,83 @@ def _follow_vehicle(world, vehicle, spectator):
     spectator.set_transform(carla.Transform(offset_location, rotation))
 
 
-def _setup_npc_traffic(world, traffic_manager, config, hero_spawn_index):
+def _setup_npc_traffic(world, traffic_manager, config, hero, hero_spawn_index):
     bp_library = world.get_blueprint_library()
     map_ = world.get_map()
     spawn_points = map_.get_spawn_points()
+    hero_loc = hero.get_location()
 
     npc_vehicles = []
+    used = {hero_spawn_index}
     for npc in config.get("npc_vehicles", []):
-        count = npc.get("count", 1)
-        for _ in range(count):
-            bp_filter = npc.get("type", "vehicle.*")
-            candidates = bp_library.filter(bp_filter)
-            if not candidates:
-                logging.warning("No blueprint matches '%s', skipping", bp_filter)
+        count = int(npc.get("count", 1))
+        bp_filter = npc.get("type", "vehicle.*")
+        candidates = bp_library.filter(bp_filter)
+        if not candidates:
+            logging.warning("No blueprint matches '%s', skipping", bp_filter)
+            continue
+
+        idx = npc.get("spawn_index")
+        if idx is not None:
+            if not 0 <= idx < len(spawn_points):
+                logging.warning("npc spawn_index %d out of range, skipping", idx)
+                continue
+            pool = [idx]
+        else:
+            near_m = float(npc.get("near_hero_m", 0.0) or 0.0)
+            pool = [
+                i
+                for i in range(len(spawn_points))
+                if i not in used
+                and (
+                    near_m <= 0.0
+                    or spawn_points[i].location.distance(hero_loc) <= near_m
+                )
+            ]
+            if near_m > 0.0 and len(pool) < count:
+                logging.warning(
+                    "only %d free spawn points within %.0fm of the hero for %d NPCs; "
+                    "adding map-wide candidates",
+                    len(pool),
+                    near_m,
+                    count,
+                )
+                pool += [
+                    i
+                    for i in range(len(spawn_points))
+                    if i not in used and i not in pool
+                ]
+            random.shuffle(pool)
+
+        spawned = 0
+        for cand in pool:
+            if spawned >= count:
+                break
+            if cand in used:
                 continue
             bp = random.choice(candidates)
             if bp.has_attribute("color"):
                 color = random.choice(bp.get_attribute("color").recommended_values)
                 bp.set_attribute("color", color)
 
-            idx = npc.get("spawn_index")
-            if idx is not None:
-                if not 0 <= idx < len(spawn_points):
-                    logging.warning("npc spawn_index %d out of range, skipping", idx)
-                    continue
-                spawn_pt = spawn_points[idx]
-            else:
-                # avoid the hero's spawn point and any already-used ones
-                free = [p for i, p in enumerate(spawn_points) if i != hero_spawn_index]
-                spawn_pt = random.choice(free)
-
-            actor = world.try_spawn_actor(bp, spawn_pt)
+            actor = world.try_spawn_actor(bp, spawn_points[cand])
             if actor is None:
-                logging.warning("Failed to spawn NPC (spawn point likely occupied)")
                 continue
+            used.add(cand)
+            spawned += 1
 
             if npc.get("autopilot", True):
                 actor.set_autopilot(True, traffic_manager.get_port())
 
             npc_vehicles.append(actor)
+
+        if spawned < count:
+            logging.warning(
+                "spawned %d/%d NPCs matching '%s' (spawn points occupied or exhausted)",
+                spawned,
+                count,
+                bp_filter,
+            )
 
     logging.info("Spawned %d NPC vehicles", len(npc_vehicles))
     return npc_vehicles
@@ -355,18 +399,29 @@ def main(args):
         lead_cfg = config.get("lead_vehicle") or {}
         lead = None
         lead_t = 0.0
+        lead_cruise_mps = float(lead_cfg.get("cruise_mps", 5.0))
         if lead_cfg.get("enabled"):
             lead = _spawn_lead(
                 world,
                 vehicle,
                 lead_cfg.get("ahead_m", 30.0),
                 traffic_manager,
-                float(lead_cfg.get("cruise_mps", 5.0)),
+                lead_cruise_mps,
             )
             if lead is not None:
                 npc_vehicles.append(lead)
+                stop_after_s = lead_cfg.get("stop_after_s")
+                if stop_after_s is None:
+                    logging.info(
+                        "lead keeps moving at %.1f m/s (set stop_after_s to stop it)",
+                        lead_cruise_mps,
+                    )
+                else:
+                    logging.info(
+                        "lead will brake to a stop after %.1fs", float(stop_after_s)
+                    )
         npc_vehicles.extend(
-            _setup_npc_traffic(world, traffic_manager, config, hero_idx)
+            _setup_npc_traffic(world, traffic_manager, config, vehicle, hero_idx)
         )
 
         if args.autopilot:
@@ -389,9 +444,9 @@ def main(args):
 
             if lead is not None and lead.is_alive:
                 lead_t += settings.fixed_delta_seconds or 0.05
-                cruise_s = float(lead_cfg.get("cruise_s", 15.0))
-                if lead_t >= cruise_s:
-                    if abs(lead_t - cruise_s) < 0.08:
+                stop_after_s = lead_cfg.get("stop_after_s")
+                if lead_stop_due(lead_t, stop_after_s):
+                    if abs(lead_t - float(stop_after_s)) < 0.08:
                         logging.info("lead braking now (t=%.1fs)", lead_t)
                         lead.set_autopilot(False)
                     held_steer = lead.get_control().steer
@@ -399,6 +454,13 @@ def main(args):
                         throttle=0.0, brake=0.8, steer=held_steer
                     )
                     lead.apply_control(ctrl)
+                elif tick % 20 == 0:
+                    limit_kmh = float(lead.get_speed_limit())
+                    if 10.0 <= limit_kmh <= 150.0:
+                        traffic_manager.vehicle_percentage_speed_difference(
+                            lead,
+                            tm_speed_difference_percent(lead_cruise_mps, limit_kmh),
+                        )
 
             world.tick()
             _follow_vehicle(world, vehicle, spectator)

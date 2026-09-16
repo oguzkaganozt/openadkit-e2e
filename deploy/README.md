@@ -53,6 +53,11 @@ docker compose --env-file config.env --profile vp down
 | [`config/bridge-config.yaml`](config/bridge-config.yaml), [`config/cyclonedds.xml`](config/cyclonedds.xml)      | DDS topic routing and networking                                |
 | [`docker-compose.yaml`](docker-compose.yaml)                                                                    | Services and mounts; Python processes live in [`nodes/`](nodes/) |
 
+The default rig packs NPC traffic near the ego (`npc_vehicles[].near_hero_m`)
+and keeps the lead vehicle rolling at `lead_vehicle.cruise_mps` for the whole
+run. Add `lead_vehicle.stop_after_s` (seconds) to brake it to a stop after N s
+instead — the stopped-lead case used for CIPO hold validation.
+
 Keep `config.env` compatible with both Bash and Compose; `build.sh` sources it.
 To override image pins, export `CARLA_IMAGE`, `AUTOWARE_IMAGE`, or `SI_BUILD_IMAGE`
 before building. Keep runtime overrides consistent when starting the loop.

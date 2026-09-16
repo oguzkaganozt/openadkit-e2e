@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "deploy" / "nodes")
 from scenario import (  # noqa: E402
     along_components,
     bumper_gap,
+    lead_stop_due,
     sim_ns,
     tm_speed_difference_percent,
 )
@@ -42,6 +43,17 @@ class TrafficManagerSpeedTests(unittest.TestCase):
 
     def test_zero_limit_with_cruise_keeps_tm_at_limit(self):
         self.assertAlmostEqual(tm_speed_difference_percent(5.0, 0.0), 0.0)
+
+
+class LeadStopTests(unittest.TestCase):
+    def test_no_stop_configured_keeps_lead_moving(self):
+        self.assertFalse(lead_stop_due(0.0, None))
+        self.assertFalse(lead_stop_due(600.0, None))
+
+    def test_stop_due_at_and_after_threshold(self):
+        self.assertFalse(lead_stop_due(14.9, 15.0))
+        self.assertTrue(lead_stop_due(15.0, 15.0))
+        self.assertTrue(lead_stop_due(20.0, 15.0))
 
 
 class GapGeometryTests(unittest.TestCase):
