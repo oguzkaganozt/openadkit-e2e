@@ -28,6 +28,39 @@ def tm_speed_difference_percent(cruise_mps: float, speed_limit_kmh: float) -> fl
     return 100.0 * (1.0 - cruise / limit_mps)
 
 
+def along_components(dx, dy, dz, fx, fy, fz):
+    along = dx * fx + dy * fy + dz * fz
+    center = math.hypot(dx, dy)
+    return center, along
+
+
+def bumper_gap(along, hero_half_x, lead_half_x):
+    return along - hero_half_x - lead_half_x
+
+
+def along_speed(vx, vy, vz, fx, fy, fz):
+    return vx * fx + vy * fy + vz * fz
+
+
+def sim_ns(sim_t):
+    return int(round(float(sim_t) * 1e9))
+
+
+def open_cipo_dump(filename):
+    dump_dir = os.environ.get("CIPO_DUMP_DIR", "").strip()
+    if not dump_dir:
+        return None
+    path = os.path.join(dump_dir, filename)
+    try:
+        os.makedirs(dump_dir, exist_ok=True)
+        handle = open(path, "a", encoding="utf-8", buffering=1)
+        logging.info("cipo-dump %s", path)
+        return handle
+    except OSError as exc:
+        logging.warning("cipo-dump open failed: %s", exc)
+        return None
+
+
 def _check_versions(client):
     client_ver = client.get_client_version()
     server_ver = client.get_server_version()
@@ -261,6 +294,7 @@ def main(args):
     npc_vehicles = []
     original_settings = None
     traffic_manager = None
+    dump_file = None
     signal.signal(signal.SIGTERM, signal.default_int_handler)
 
     try:
@@ -349,6 +383,7 @@ def main(args):
         prev_loc = None
         dist_m = 0.0
         tick = 0
+        dump_file = open_cipo_dump("gt.jsonl")
         while True:
             loop_start = time.time()
 
@@ -370,8 +405,10 @@ def main(args):
             tick += 1
             sim_t[0] = tick * (settings.fixed_delta_seconds or 0.05)
 
+            hit = None
             while collisions:
                 t, other, ix, iy, iz = collisions.pop(0)
+                hit = (t, other, ix, iy, iz)
                 logging.warning(
                     "COLLISION t=%.1fs with %s impulse=(%.1f,%.1f,%.1f)",
                     t,
@@ -380,6 +417,53 @@ def main(args):
                     iy,
                     iz,
                 )
+            if dump_file is not None:
+                rec = {
+                    "wall_ns": time.time_ns(),
+                    "sim_t": sim_t[0],
+                    "sim_ns": sim_ns(sim_t[0]),
+                    "hero_v": 0.0,
+                    "lead_v": None,
+                    "center": None,
+                    "along": None,
+                    "bumper": None,
+                    "rel_v": None,
+                    "collision": 0,
+                }
+                try:
+                    ht = vehicle.get_transform()
+                    hv = vehicle.get_velocity()
+                    fwd = ht.get_forward_vector()
+                    rec["hero_v"] = math.hypot(hv.x, hv.y)
+                    rec["hero_along_v"] = along_speed(
+                        hv.x, hv.y, hv.z, fwd.x, fwd.y, fwd.z
+                    )
+                    if lead is not None and lead.is_alive:
+                        lt = lead.get_transform()
+                        lv = lead.get_velocity()
+                        dx = lt.location.x - ht.location.x
+                        dy = lt.location.y - ht.location.y
+                        dz = lt.location.z - ht.location.z
+                        center, along = along_components(
+                            dx, dy, dz, fwd.x, fwd.y, fwd.z
+                        )
+                        hero_half = float(vehicle.bounding_box.extent.x)
+                        lead_half = float(lead.bounding_box.extent.x)
+                        rec["lead_v"] = math.hypot(lv.x, lv.y)
+                        rec["lead_along_v"] = along_speed(
+                            lv.x, lv.y, lv.z, fwd.x, fwd.y, fwd.z
+                        )
+                        rec["center"] = center
+                        rec["along"] = along
+                        rec["bumper"] = bumper_gap(along, hero_half, lead_half)
+                        rec["rel_v"] = rec["lead_along_v"] - rec["hero_along_v"]
+                    if hit is not None:
+                        rec["collision"] = 1
+                        rec["collision_other"] = hit[1]
+                        rec["impulse"] = [hit[2], hit[3], hit[4]]
+                    dump_file.write(json.dumps(rec, separators=(",", ":")) + "\n")
+                except Exception as exc:
+                    logging.debug("cipo-dump skipped: %s", exc)
             if lead is not None and lead.is_alive and tick % 20 == 0:
                 hl = vehicle.get_location()
                 ll = lead.get_location()
@@ -449,9 +533,13 @@ def main(args):
         print("\nCancelled by user. Bye!")
 
     finally:
-        # Block further KeyboardInterrupts during cleanup
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        if dump_file is not None:
+            try:
+                dump_file.close()
+            except Exception:
+                pass
 
         try:
             if traffic_manager:
@@ -476,7 +564,6 @@ def main(args):
                 vehicle.destroy()
 
         finally:
-            # Re-enable KeyboardInterrupt handling
             signal.signal(signal.SIGINT, signal.default_int_handler)
 
 

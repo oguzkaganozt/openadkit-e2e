@@ -48,6 +48,7 @@ from carla_bridge import (  # noqa: E402
     STOP_SPEED_MPS,
     carla_longitudinal,
     carla_steer,
+    sim_stamp,
 )
 
 
@@ -82,6 +83,14 @@ class LongitudinalTests(unittest.TestCase):
         throttle, brake = carla_longitudinal(40.0, 5.0, 0.0)
         self.assertEqual(brake, 0.0)
         self.assertAlmostEqual(throttle, MAX_THROTTLE)
+
+
+class SimStampTests(unittest.TestCase):
+    def test_splits_fractional_seconds(self):
+        self.assertEqual(sim_stamp(24.1), (24, 100000000))
+
+    def test_clamps_negative(self):
+        self.assertEqual(sim_stamp(-1.0), (0, 0))
 
 
 class SteerTests(unittest.TestCase):

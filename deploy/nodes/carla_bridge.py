@@ -20,11 +20,25 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Image
-from std_msgs.msg import Float64
+from std_msgs.msg import Float32MultiArray, Float64
 
 
 def _quat_from_yaw(yaw: float):
     return (0.0, 0.0, math.sin(yaw * 0.5), math.cos(yaw * 0.5))
+
+
+def sim_stamp(ts: float) -> tuple[int, int]:
+    if ts < 0.0:
+        ts = 0.0
+    sec = int(ts)
+    nsec = int(round((ts - sec) * 1e9))
+    if nsec >= 1_000_000_000:
+        sec += 1
+        nsec -= 1_000_000_000
+    if nsec < 0:
+        sec = max(0, sec - 1)
+        nsec += 1_000_000_000
+    return sec, nsec
 
 
 STOP_SPEED_MPS = 0.05
@@ -132,6 +146,11 @@ class CarlaBridge(Node):
         self._max_steer = None
         self._camera_count = 0
         self._camera_started = time.monotonic()
+        self._cipo_has = False
+        self._cipo_dist = 150.0
+        self._cipo_vel = 0.0
+        self._cipo_latch = False
+        self._cipo_hold0 = None
         # 1 Hz run-evidence snapshots (user asked: a picture every second
         # next to the logs). Host-mounted at /tmp/snaps via compose.
         self._snap_dir = os.environ.get("SNAP_DIR", "/tmp/snaps")
@@ -166,6 +185,9 @@ class CarlaBridge(Node):
             self.get_parameter("control_topic").value,
             self._on_control,
             1,
+        )
+        self.create_subscription(
+            Float32MultiArray, "/vehicle/cipo", self._on_cipo, 1
         )
         self.create_timer(0.05, self._on_timer)
         threading.Thread(target=self._http, daemon=True).start()
@@ -217,7 +239,7 @@ class CarlaBridge(Node):
                 bp.set_attribute("gamma", "2.2")
                 tf = carla.Transform(
                     carla.Location(x=1.544, y=0.0243, z=2.116),
-                    carla.Rotation(pitch=-0.11, yaw=-0.23, roll=-0.1),
+                    carla.Rotation(pitch=-2.0, yaw=-0.23, roll=-0.1),
                 )
                 try:
                     self._camera = self._world.spawn_actor(
@@ -371,7 +393,7 @@ class CarlaBridge(Node):
             arr = arr.reshape((image.height, image.width, 4))
             bgr = np.ascontiguousarray(arr[:, :, :3])
             with self._lock:
-                self._ros_image = (image.width, image.height, bgr)
+                self._ros_image = (image.width, image.height, bgr, float(image.timestamp))
                 self._latest_frame = bgr
             self._camera_count += 1
             if self._camera_count == 1 or self._camera_count % 50 == 0:
@@ -391,10 +413,12 @@ class CarlaBridge(Node):
             if item is None:
                 time.sleep(0.005)
                 continue
-            width, height, bgr = item
+            width, height, bgr, sim_t = item
             try:
                 msg = Image()
-                msg.header.stamp = self.get_clock().now().to_msg()
+                sec, nsec = sim_stamp(sim_t)
+                msg.header.stamp.sec = sec
+                msg.header.stamp.nanosec = nsec
                 msg.header.frame_id = "hero/main_cam"
                 msg.height = height
                 msg.width = width
@@ -418,6 +442,7 @@ class CarlaBridge(Node):
                 continue
             try:
                 small = cv2.resize(frame, (640, 427))
+                small = self._draw_cipo_overlay(small)
                 ok, buf = cv2.imencode(
                     ".jpg", small, [int(cv2.IMWRITE_JPEG_QUALITY), 45]
                 )
@@ -465,6 +490,64 @@ class CarlaBridge(Node):
         self._http_server = ThreadingHTTPServer(("0.0.0.0", 8090), _MjpegHandler)
         self._http_server.daemon_threads = True
         self._http_server.serve_forever()
+
+    def _on_cipo(self, msg: Float32MultiArray):
+        if len(msg.data) < 4:
+            return
+        has = msg.data[0] >= 0.5
+        now = time.monotonic()
+        if has:
+            if self._cipo_hold0 is None:
+                self._cipo_hold0 = now
+        else:
+            self._cipo_hold0 = None
+        self._cipo_has = has
+        self._cipo_dist = float(msg.data[1])
+        self._cipo_vel = float(msg.data[2])
+        self._cipo_latch = msg.data[3] >= 0.5
+
+    def _gt_lead_m(self):
+        if self._vehicle is None or not self._vehicle.is_alive or self._world is None:
+            return None
+        try:
+            hl = self._vehicle.get_location()
+            for actor in self._world.get_actors().filter("vehicle.*"):
+                if actor.attributes.get("role_name") == "lead":
+                    ll = actor.get_location()
+                    return math.hypot(hl.x - ll.x, hl.y - ll.y)
+        except Exception:
+            return None
+        return None
+
+    def _draw_cipo_overlay(self, img):
+        has = self._cipo_has
+        hold = 0.0
+        if has and self._cipo_hold0 is not None:
+            hold = time.monotonic() - self._cipo_hold0
+        color = (40, 220, 40) if has else (40, 40, 220)
+        cv2.rectangle(img, (0, 0), (640, 56), (20, 20, 20), -1)
+        if has:
+            text = "CIPO %.0fm  hold %.1fs" % (self._cipo_dist, hold)
+            if self._cipo_latch:
+                text += "  LATCH"
+        else:
+            text = "CIPO off"
+        cv2.putText(
+            img, text, (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.65, color, 2, cv2.LINE_AA
+        )
+        gt = self._gt_lead_m()
+        gt_txt = "GT --" if gt is None else "GT %.0fm" % gt
+        cv2.putText(
+            img,
+            gt_txt,
+            (8, 48),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (200, 200, 200),
+            1,
+            cv2.LINE_AA,
+        )
+        return img
 
     def _on_control(self, msg: Control):
         self._last_steer = float(msg.lateral.steering_tire_angle)

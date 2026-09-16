@@ -22,7 +22,12 @@ _stub("carla")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "deploy" / "nodes"))
 
-from scenario import tm_speed_difference_percent  # noqa: E402
+from scenario import (  # noqa: E402
+    along_components,
+    bumper_gap,
+    sim_ns,
+    tm_speed_difference_percent,
+)
 
 
 class TrafficManagerSpeedTests(unittest.TestCase):
@@ -37,6 +42,17 @@ class TrafficManagerSpeedTests(unittest.TestCase):
 
     def test_zero_limit_with_cruise_keeps_tm_at_limit(self):
         self.assertAlmostEqual(tm_speed_difference_percent(5.0, 0.0), 0.0)
+
+
+class GapGeometryTests(unittest.TestCase):
+    def test_along_and_bumper(self):
+        center, along = along_components(20.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+        self.assertAlmostEqual(center, 20.0)
+        self.assertAlmostEqual(along, 20.0)
+        self.assertAlmostEqual(bumper_gap(along, 2.5, 2.5), 15.0)
+
+    def test_sim_ns(self):
+        self.assertEqual(sim_ns(1.5), 1500000000)
 
 
 if __name__ == "__main__":

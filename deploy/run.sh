@@ -40,6 +40,37 @@ case "${COMPUTE:-auto}" in
   *) echo "Unknown COMPUTE mode: $COMPUTE (use auto, cpu, or gpu)" >&2; exit 2 ;;
 esac
 echo "Compute mode: $COMPUTE"
+RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+CIPO_DUMP_HOST="${CIPO_DUMP_HOST:-$ROOT/dumps/cipo/$RUN_ID}"
+mkdir -p "$CIPO_DUMP_HOST"
+export CIPO_DUMP_HOST RUN_ID
+python3 - <<PY
+import json, os, subprocess
+from pathlib import Path
+root = Path(os.environ["ROOT"] if "ROOT" in os.environ else "$ROOT")
+dump = Path("$CIPO_DUMP_HOST")
+
+def sha(path):
+    try:
+        return subprocess.check_output(
+            ["git", "-C", str(path), "rev-parse", "HEAD"], text=True
+        ).strip()
+    except Exception:
+        return ""
+
+rec = {
+    "run_id": "$RUN_ID",
+    "e2e_sha": sha(root),
+    "vp_sha": sha(root / "upstream" / "vision_pilot"),
+    "si_sha": sha(root / "upstream" / "autoware-safety-island"),
+    "rig": os.environ.get("RIG_JSON", "carla-rig.json"),
+    "compute": "$COMPUTE",
+    "visionpilot_image": os.environ.get("VISIONPILOT_IMAGE", ""),
+    "guard": os.environ.get("GUARD", "1"),
+}
+(dump / "run.json").write_text(json.dumps(rec, indent=2) + "\n")
+print("CIPO dump:", dump)
+PY
 if [[ "$COMPUTE" == "cpu" ]]; then
   # Defaults for a CPU-only host; explicit exports still win.
   VISIONPILOT_IMAGE="${VISIONPILOT_IMAGE:-visionpilot:cpu-ros2}"
@@ -70,6 +101,22 @@ wait_for_log() {
   done
   echo "$description did not become ready" >&2
   docker logs --since "$started_at" "$container" >&2
+  return 1
+}
+
+wait_for_vp_rate() {
+  local window=5 need=15
+  echo "Waiting for VP to warm up (>= ${need} plan lines / ${window}s)..."
+  for _ in $(seq 1 60); do
+    local n
+    n="$(docker logs --since "${window}s" openadkit-e2e-visionpilot 2>&1 | grep -c "plan:")" || n=0
+    if (( n >= need )); then
+      echo "VP warm (${n} plan lines in ${window}s)"
+      return 0
+    fi
+    sleep 2
+  done
+  echo "VP did not reach a stable rate" >&2
   return 1
 }
 
@@ -137,6 +184,7 @@ wait_for_log openadkit-e2e-si "Guard:" "SI guard"
 wait_for_log openadkit-e2e-adapter "vehicle/lane_path + /localization/kinematic_state" "adapter subscribed"
 wait_for_log openadkit-e2e-adapter "xfer #" "VP Path + adapter Trajectory"
 wait_for_log openadkit-e2e-visionpilot "plan: tyre=" "VP planning"
+wait_for_vp_rate
 wait_for_log openadkit-e2e-carla-bridge "applied control #" "SI control"
 # PREVIEW_HOST wins; otherwise auto-detect the public IP (link-local EC2-style
 # metadata, then a public echo service), else fall back to local addresses.
@@ -157,3 +205,4 @@ else
   done
   echo "  http://127.0.0.1:8090/ (local)"
 fi
+echo "CIPO dump: $CIPO_DUMP_HOST"
