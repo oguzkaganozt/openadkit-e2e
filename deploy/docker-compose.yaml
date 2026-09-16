@@ -104,15 +104,18 @@ services:
       - DISPLAY=${DISPLAY}
       - LIBGL_ALWAYS_SOFTWARE=1
       - QT_X11_NO_MITSHM=1
+      - QT_QPA_PLATFORM=offscreen
       - ROS_DOMAIN_ID=1
+      - CIPO_DUMP_DIR=/cipo-dump
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - ./config/${VISIONPILOT_CONF:-vision_pilot.conf}:/usr/share/visionpilot/config/vision_pilot.conf:ro
       - ./config/vision_pilot.carla.conf:/usr/share/visionpilot/config/vision_pilot_ros2.conf:ro
       - ./config/H.yaml:/usr/share/visionpilot/config/H.yaml:ro
+      - ${CIPO_DUMP_HOST:-/tmp/cipo-dump}:/cipo-dump:rw
     entrypoint: ["/bin/bash", "-lc"]
     command:
-      - source /opt/ros/jazzy/setup.bash && exec /usr/bin/VisionPilot --no-window
+      - source /opt/ros/jazzy/setup.bash && exec /usr/bin/VisionPilot --no-window --debug-viz
     restart: on-failure
 
   scenario:
@@ -124,10 +127,12 @@ services:
     init: true
     environment:
       - SPAWN_INDEX=${SPAWN_INDEX:-184}
+      - CIPO_DUMP_DIR=/cipo-dump
     volumes:
       - ./nodes/scenario.py:/opt/nodes/scenario.py:ro
       - ./config/${RIG_JSON:-carla-rig.json}:/opt/config/carla-rig.json:ro
       - /tmp/carla-0.9.16-cp310-cp310-manylinux_2_31_x86_64.whl:/opt/carla-0.9.16-cp310-cp310-manylinux_2_31_x86_64.whl:ro
+      - ${CIPO_DUMP_HOST:-/tmp/cipo-dump}:/cipo-dump:rw
     command: >
       bash -lc "python3 -c 'import carla' 2>/dev/null ||
       pip3 install /opt/carla-0.9.16-cp310-cp310-manylinux_2_31_x86_64.whl &&
