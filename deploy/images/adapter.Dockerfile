@@ -5,8 +5,10 @@
 # later the actuator reads /control/safety_island/approved_request
 # (safety_island_msgs); the Autoware universe image ships neither and its
 # pruned toolchain (no cc1/Scrt1.o/crti.o, no fastcdr headers) cannot build
-# them, so both packages are built in a clean ros:humble-ros-base stage and
-# only the generated artifacts are copied into the runtime image.
+# them. safety_island_msgs additionally depends on autoware_control_msgs,
+# which only exists in the Autoware install tree, so that tree is brought
+# into the builder stage and sourced there. Only the generated artifacts are
+# copied into the runtime image.
 #
 # Build with the message package directories as named contexts
 # (deploy/build.sh does this):
@@ -17,10 +19,14 @@
 #     --build-context "simsgs=safety_island_msgs" deploy/images
 ARG AUTOWARE_IMAGE=ghcr.io/autowarefoundation/autoware:universe-20250207
 
+FROM ${AUTOWARE_IMAGE} AS autoware
+
 FROM ros:humble-ros-base AS msgs-builder
+COPY --from=autoware /opt/autoware /opt/autoware
 COPY --from=vpmsgs / /src/visionpilot_msgs
 COPY --from=simsgs / /src/safety_island_msgs
 RUN . /opt/ros/humble/setup.sh \
+ && . /opt/autoware/setup.bash \
  && for pkg in visionpilot_msgs safety_island_msgs; do \
       cmake -S "/src/$pkg" -B "/tmp/build/$pkg" \
             -DCMAKE_INSTALL_PREFIX=/opt/ros/humble \
