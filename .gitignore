@@ -2,3 +2,5 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
+# Pinned large map artifacts (fetched by deploy/tools/fetch-town04-map.sh)
+deploy/maps/

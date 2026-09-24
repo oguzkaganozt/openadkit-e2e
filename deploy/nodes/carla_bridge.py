@@ -17,6 +17,7 @@ from autoware_vehicle_msgs.msg import SteeringReport
 from builtin_interfaces.msg import Time
 from geometry_msgs.msg import AccelWithCovarianceStamped
 from nav_msgs.msg import Odometry
+from rosgraph_msgs.msg import Clock
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
@@ -181,6 +182,10 @@ class CarlaBridge(Node):
         self.image_pub = self.create_publisher(
             Image, "/carla/hero/main_cam/image", img_qos
         )
+        # CARLA simulation clock for consumers that run with use_sim_time
+        # (the Autoware planning configuration does). Stamped with the same
+        # source-identity time as the ego topics.
+        self.clock_pub = self.create_publisher(Clock, "/clock", 1)
         self.create_subscription(
             Control, "/control/trajectory_follower/control_cmd", self._on_control, 1
         )
@@ -284,6 +289,12 @@ class CarlaBridge(Node):
         odom.twist.twist.linear.z = sample["vz"]
         self.odom_pub.publish(odom)
         self.speed_pub.publish(Float64(data=sample["speed"]))
+
+        # Sim-time clock, one message per sampled frame alongside the ego
+        # topics it timestamps (consumers with use_sim_time follow this).
+        clock = Clock()
+        clock.clock = stamp
+        self.clock_pub.publish(clock)
 
         accel = AccelWithCovarianceStamped()
         accel.header.stamp = stamp
