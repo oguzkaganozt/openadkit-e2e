@@ -7,7 +7,19 @@ cd "$ROOT/deploy"
 # Rig selection: RIG_JSON=carla-rig-empty.json for lead-free A/B runs.
 RIG_JSON="${RIG_JSON:-carla-rig.json}"
 export RIG_JSON
+# Supervision mode selects which built binary is staged at the path compose
+# mounts: si (follower drives the selected trajectory source) or vp
+# (VisionPilot command checked and passed through, never recomputed). Build
+# the two binaries with:
+#   ./build.sh --platform freertos-posix -d build/freertos-posix    ...            (si)
+#   ./build.sh --platform freertos-posix -d build/freertos-posix-vp ... --supervision-mode vp
+SI_MODE="${SI_MODE:-si}"
 SI_BIN="$ROOT/upstream/autoware-safety-island/build/freertos-posix/actuation_freertos"
+case "$SI_MODE" in
+  si) SI_BIN_SRC="$ROOT/upstream/autoware-safety-island/build/freertos-posix/actuation_freertos" ;;
+  vp) SI_BIN_SRC="$ROOT/upstream/autoware-safety-island/build/freertos-posix-vp/actuation_freertos" ;;
+  *) echo "Invalid SI_MODE '$SI_MODE' (expected si or vp)" >&2; exit 2 ;;
+esac
 COMPOSE=(docker compose --env-file config.env --profile vp)
 
 COMPUTE="${COMPUTE:-auto}"
@@ -98,11 +110,12 @@ wait_for_carla() {
   return 1
 }
 
-if [[ ! -x "$SI_BIN" ]]; then
-  echo "SI binary missing: $SI_BIN" >&2
-  echo "Build first: $ROOT/deploy/build.sh --dds-interface <nic>" >&2
+if [[ ! -x "$SI_BIN_SRC" ]]; then
+  echo "SI binary missing for mode '$SI_MODE': $SI_BIN_SRC" >&2
+  echo "Build first: $ROOT/deploy/build.sh --dds-interface <nic> [--supervision-mode $SI_MODE]" >&2
   exit 1
 fi
+echo "SI supervision mode: $SI_MODE ($SI_BIN_SRC)"
 
 pkill -f "$SI_BIN" 2>/dev/null || true
 pkill -f "$ROOT/deploy/nodes/scenario.py" 2>/dev/null || true
@@ -123,6 +136,11 @@ for name in openadkit-e2e-carla openadkit-e2e-scenario openadkit-e2e-carla-bridg
             openadkit-e2e-bridge openadkit-e2e-operation-mode; do
   docker rm -f "$name" >/dev/null 2>&1 || true
 done
+
+# Stage the selected supervision mode's binary at the fixed path the compose
+# si service mounts. Safe here: the down above removed the si container and
+# the pkill stopped any host process, so nothing holds the file.
+cp -f "$SI_BIN_SRC" "$SI_BIN"
 
 "${COMPOSE[@]}" up -d --force-recreate carla
 wait_for_carla

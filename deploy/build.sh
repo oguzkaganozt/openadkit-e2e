@@ -172,9 +172,8 @@ docker run --rm \
   bootstrap-si "$DDS_INTERFACE"
 test -x "$SI/build/freertos-posix/actuation_freertos"
 
-echo "Pulling runtime images and building the domain bridge..."
+echo "Pulling runtime images..."
 "${COMPOSE[@]}" pull carla
-"${COMPOSE[@]}" build domain-bridge
 
 echo "Building the adapter image ($ADAPTER_IMAGE: Autoware runtime + visionpilot_msgs + safety_island_msgs)..."
 docker build \
@@ -183,6 +182,14 @@ docker build \
   --build-arg "AUTOWARE_IMAGE=$AUTOWARE_IMAGE" \
   --build-context "vpmsgs=$VP/modules/middleware_interfaces/ros2_interface/visionpilot_msgs" \
   --build-context "simsgs=$ROOT/safety_island_msgs" \
+  "$DEPLOY/images"
+
+echo "Building the domain-bridge image ($BRIDGE_IMAGE: adapter image + domain_bridge)..."
+docker build \
+  -f "$DEPLOY/images/domain-bridge.Dockerfile" \
+  -t "$BRIDGE_IMAGE" \
+  --build-arg "ADAPTER_IMAGE=$ADAPTER_IMAGE" \
+  --build-arg "ROS_DISTRO=humble" \
   "$DEPLOY/images"
 "${COMPOSE[@]}" config -q
 

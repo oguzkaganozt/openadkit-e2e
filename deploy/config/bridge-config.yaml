@@ -4,6 +4,10 @@ topics:
     type: autoware_control_msgs/msg/Control
     from_domain: 2
     to_domain: 1
+  vehicle/driving_command:
+    type: visionpilot_msgs/msg/DrivingCommand
+    from_domain: 1
+    to_domain: 2
   vehicle/status/steering_status:
     type: autoware_vehicle_msgs/msg/SteeringReport
     from_domain: 1

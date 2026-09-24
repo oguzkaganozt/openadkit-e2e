@@ -99,10 +99,7 @@ services:
     restart: "no"
 
   domain-bridge:
-    build:
-      context: ../upstream/autoware-safety-island/demo/bridge
-      args:
-        ROS_DISTRO: humble
+    image: ${BRIDGE_IMAGE:-openadkit-e2e-domain-bridge:latest}
     container_name: openadkit-e2e-bridge
     <<: *run-logging
     network_mode: host
@@ -112,6 +109,13 @@ services:
     volumes:
       - ./config/cyclonedds.xml:/autoware/cyclonedds.xml:ro
       - ./config/bridge-config.yaml:/autoware/bridge-config.yaml:ro
+    entrypoint: ["/bin/bash", "-lc"]
+    command:
+      - >-
+        source "/opt/ros/$${ROS_DISTRO}/setup.bash" &&
+        source "/opt/autoware/setup.bash" &&
+        exec ros2 run domain_bridge domain_bridge
+        --wait-for-publisher false /autoware/bridge-config.yaml
     restart: "no"
 
   visionpilot:
