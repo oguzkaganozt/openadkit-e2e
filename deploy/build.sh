@@ -176,12 +176,14 @@ echo "Pulling runtime images and building the domain bridge..."
 "${COMPOSE[@]}" pull carla
 "${COMPOSE[@]}" build domain-bridge
 
-echo "Building the adapter image ($ADAPTER_IMAGE: Autoware runtime + visionpilot_msgs)..."
+echo "Building the adapter image ($ADAPTER_IMAGE: Autoware runtime + visionpilot_msgs + safety_island_msgs)..."
 docker build \
   -f "$DEPLOY/images/adapter.Dockerfile" \
   -t "$ADAPTER_IMAGE" \
   --build-arg "AUTOWARE_IMAGE=$AUTOWARE_IMAGE" \
-  "$VP/modules/middleware_interfaces/ros2_interface/visionpilot_msgs"
+  --build-context "vpmsgs=$VP/modules/middleware_interfaces/ros2_interface/visionpilot_msgs" \
+  --build-context "simsgs=$ROOT/safety_island_msgs" \
+  "$DEPLOY/images"
 "${COMPOSE[@]}" config -q
 
 echo "Build complete ($COMPUTE mode)."
