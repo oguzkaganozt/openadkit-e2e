@@ -52,6 +52,12 @@ ACCEL_THROTTLE_GAIN = 0.08
 BRAKE_DECEL_GAIN = 0.25
 MAX_THROTTLE = 0.5
 CONTROL_TIMEOUT_SEC = 0.5
+# Stream watchdog (s): if the world ticks but no camera frame arrives for
+# this long, the sensor session was purged server-side (e.g. another client
+# changed the world); the CARLA client would otherwise keep requesting the
+# dead stream id until the server's RPC starves. Re-listen to get a fresh
+# session instead.
+STREAM_WATCHDOG_SEC = 5.0
 
 
 def carla_longitudinal(cmd_v: float, cmd_a: float, actual_v: float) -> tuple[float, float]:
@@ -140,6 +146,7 @@ class CarlaBridge(Node):
         self._ros_image = None
         self._sample = None
         self._last_frame = None
+        self._last_frame_at = 0.0
         self._actual_v = 0.0
         self._max_steer = None
         self._preview_frame = None
@@ -207,6 +214,10 @@ class CarlaBridge(Node):
                     break
         if self._vehicle is None:
             return
+        if self._camera is not None and not self._camera.is_alive:
+            # The camera died with a world change; drop it so it is re-found
+            # (or spawned) below instead of listening on a dead actor.
+            self._camera = None
         if self._camera is None:
             for actor in self._world.get_actors().filter("sensor.camera.rgb"):
                 if actor.attributes.get("role_name") == self._camera_role:
@@ -235,6 +246,7 @@ class CarlaBridge(Node):
                     return
             try:
                 self._camera.listen(self._on_camera)
+                self._last_frame_at = time.monotonic()
                 self.get_logger().info(
                     "camera id=%s %sx%s"
                     % (
@@ -312,6 +324,28 @@ class CarlaBridge(Node):
                     if time.monotonic() - ctrl_at > CONTROL_TIMEOUT_SEC:
                         ctrl = carla.VehicleControl(throttle=0.0, brake=0.4, steer=0.0)
                     vehicle.apply_control(ctrl)
+                # Stream watchdog: the world is ticking (find_actors got a
+                # live vehicle) but no camera frame arrived for a while, so
+                # the sensor session was purged server-side. Without this,
+                # the CARLA client keeps requesting the dead stream id and
+                # storms the server until its RPC starves. Re-listen to get
+                # a fresh session; the retry is rate-limited by resetting
+                # the timestamp even when the call fails.
+                if (
+                    self._camera is not None
+                    and self._last_frame_at > 0.0
+                    and time.monotonic() - self._last_frame_at > STREAM_WATCHDOG_SEC
+                ):
+                    try:
+                        self._camera.stop()
+                        self._camera.listen(self._on_camera)
+                        self.get_logger().warn(
+                            "camera stream stalled >%.1fs; re-listened"
+                            % STREAM_WATCHDOG_SEC
+                        )
+                    except Exception as exc:
+                        self.get_logger().warn("camera re-listen failed: %s" % exc)
+                    self._last_frame_at = time.monotonic()
                 # Read the world snapshot that the state below belongs to.
                 # If the scenario advances the frame between the reads, the
                 # sample would mix two frames; skip it and retry.
@@ -376,6 +410,7 @@ class CarlaBridge(Node):
 
     def _on_camera(self, image):
         try:
+            self._last_frame_at = time.monotonic()
             arr = np.frombuffer(image.raw_data, dtype=np.uint8)
             arr = arr.reshape((image.height, image.width, 4))
             bgr = np.ascontiguousarray(arr[:, :, :3])

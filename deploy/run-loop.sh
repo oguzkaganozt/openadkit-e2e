@@ -107,16 +107,24 @@ fi
 pkill -f "$SI_BIN" 2>/dev/null || true
 pkill -f "$ROOT/deploy/nodes/scenario.py" 2>/dev/null || true
 
-# No CARLA client may be attached while the scenario replaces the world.
-# A live sensor listener across a load_world leaves the 0.9.16 server
-# pumping requests for dead streams ("Invalid session: no stream available
-# with id N", ~550/s) until its RPC starves and every client times out;
-# restart: on-failure can also resurrect a crashed client mid-wipe. Stop
-# them explicitly; each stage below recreates its service afterwards.
-# (Observed 2026-09-25: required a CARLA recreate to recover.)
-"${COMPOSE[@]}" stop carla-bridge visionpilot adapter si scenario 2>/dev/null || true
+# Every attempt starts from zero: tear the whole project down (containers,
+# not images) so no CARLA client, listener, or half-wiped world survives a
+# previous run. A self-resurrected client across another client's world wipe
+# leaves the 0.9.16 server pumping requests for dead streams ("Invalid
+# session: no stream available with id N") until its RPC starves (observed
+# 2026-09-25, twice); compose restart policies are disabled for the same
+# reason. CARLA is then force-recreated below, so each attempt gets a fresh
+# server rather than a wedged one.
+"${COMPOSE[@]}" down --remove-orphans --timeout 10 2>/dev/null || true
+# Belt and braces: remove any deterministic-name container Compose does not
+# own (ad-hoc probe runs) that could still hold a CARLA client.
+for name in openadkit-e2e-carla openadkit-e2e-scenario openadkit-e2e-carla-bridge \
+            openadkit-e2e-adapter openadkit-e2e-si openadkit-e2e-visionpilot \
+            openadkit-e2e-bridge openadkit-e2e-operation-mode; do
+  docker rm -f "$name" >/dev/null 2>&1 || true
+done
 
-"${COMPOSE[@]}" up -d carla
+"${COMPOSE[@]}" up -d --force-recreate carla
 wait_for_carla
 # Shared DDS/mode infrastructure (no world handles; start once).
 "${COMPOSE[@]}" up -d domain-bridge operation-mode

@@ -3,6 +3,13 @@
 #
 #   ./run-loop.sh
 
+# Lifecycle is owned by run-loop.sh, not Docker: every attempt tears the
+# whole project down and recreates every container (including CARLA).
+# restart: on-failure is deliberately disabled on every service — a
+# self-resurrected CARLA client (scenario load_world or a bridge
+# re-listen) across another client's wipe leaves the 0.9.16 server
+# pumping requests for dead streams until its RPC starves (observed
+# 2026-09-25, twice).
 # Keep a full run's evidence: verbose nodes (adapter xfer, SI 30 Hz)
 # otherwise rotate away mid-campaign. ~10x a night run per service.
 x-logging: &run-logging
@@ -31,7 +38,7 @@ services:
       bash CarlaUE4.sh -nosound
       -RenderOffScreen
       -carla-rpc-port=2000
-    restart: on-failure
+    restart: "no"
 
   adapter:
     image: ${ADAPTER_IMAGE:-openadkit-e2e-adapter:latest}
@@ -49,7 +56,7 @@ services:
       bash -lc "source /opt/ros/$${ROS_DISTRO}/setup.bash &&
       source /opt/autoware/setup.bash &&
       python3 /opt/adapter/path_to_trajectory.py"
-    restart: on-failure
+    restart: "no"
 
   operation-mode:
     image: ${AUTOWARE_IMAGE:?Use --env-file config.env}
@@ -66,7 +73,7 @@ services:
       bash -lc "source /opt/ros/$${ROS_DISTRO}/setup.bash &&
       source /opt/autoware/setup.bash &&
       python3 /opt/nodes/operation_mode.py"
-    restart: on-failure
+    restart: "no"
 
   carla-bridge:
     image: ${AUTOWARE_IMAGE:?Use --env-file config.env}
@@ -89,7 +96,7 @@ services:
       python3 /opt/nodes/carla_bridge.py"
     depends_on:
       - carla
-    restart: on-failure
+    restart: "no"
 
   domain-bridge:
     build:
@@ -105,7 +112,7 @@ services:
     volumes:
       - ./config/cyclonedds.xml:/autoware/cyclonedds.xml:ro
       - ./config/bridge-config.yaml:/autoware/bridge-config.yaml:ro
-    restart: on-failure
+    restart: "no"
 
   visionpilot:
     profiles: ["vp"]
@@ -128,7 +135,7 @@ services:
     entrypoint: ["/bin/bash", "-lc"]
     command:
       - source /opt/ros/jazzy/setup.bash && exec /usr/bin/VisionPilot --no-window
-    restart: on-failure
+    restart: "no"
 
   scenario:
     image: ${AUTOWARE_IMAGE:?Use --env-file config.env}
@@ -149,7 +156,7 @@ services:
       python3 /opt/nodes/scenario.py --host 127.0.0.1 --port 2000 -f /opt/config/carla-rig.json"
     depends_on:
       - carla
-    restart: on-failure
+    restart: "no"
 
   si:
     image: ${AUTOWARE_IMAGE:?Use --env-file config.env}
@@ -167,4 +174,4 @@ services:
       - domain-bridge
       - carla-bridge
       - adapter
-    restart: on-failure
+    restart: "no"
