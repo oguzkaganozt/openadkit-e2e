@@ -72,6 +72,8 @@ SI+nominal 3 m/s vs SI+VP speed intent — not vanilla VP steering.
 
 ### A/B baseline: SI+VP speed vs SI+3 m/s (empty road, 2026-09-11)
 
+Historical: this ran on the pre-`DrivingReference` adapter
+(`lane_path`/`speed_horizon`, removed); reproduce B from commit `25aa746`.
 Town04 spawn 184, no lead, no NPCs (`RIG_JSON=carla-rig-empty.json`;
 B adds `CRUISE_OVERRIDE_MPS=3.0`). Same road, same stack, 1 Hz
 ground-truth pose + lane-offset log. Shared segment t=40–95 s:
@@ -91,29 +93,30 @@ in a fork (empty Path) and the adapter's ingress gate held the car
 on-road with zero contact (see below). So: longitudinal fidelity proven
 at both speeds; both runs ended on VP lateral limits, not the pipeline.
 
-### Phase 1 ingress: stale input now answers with a stop
+### Fault policy moved to the Safety Island (SI #62)
 
-SI latches its last trajectory (`has_trajectory_` never clears), so a
-silent adapter would drive stale forever. The adapter now gates every
-input on age (`STALE_INPUT_MS=1000`, >3x the worst healthy 270 ms
-sample — not a copied 0.5 s): stale/missing horizon or odom, empty
-path, bad shape, or no Path at all for 1 s (watchdog) each publish an
-explicit zero-speed trajectory with a counted reason
-(`stop #N reason=...`), and the watchdog clears the zombie horizon so
-motion cannot resume without fresh input. Startup hold falls out of the
-same rule (`stop #1 reason=watchdog-no-path`, verified live). 33 unit
-tests cover the fault answers (late, dropped, restarted, bad shape;
-there is no sequence on this wire, so the policy is age-only by design).
+The predecessor policy answered stale/missing/late input with an
+adapter-authored zero-speed trajectory. That is retired: an adapter-made
+stop would refresh SI's selected input and mask the fault SI must see.
+The adapter now accepts only a valid reference whose `source_stamp`
+matches an ego sample exactly (same CARLA world frame) and publishes
+nothing otherwise, with counted reject reasons
+(`reject <reason> (totals ...)`). Source freshness watchdogs and the stop
+decision are SI work (`autoware-safety-island` #62/#64): proposed first
+thresholds are 1.0 s for the VP outputs and the camera and 0.3–0.5 s for
+the 20 Hz ego/speed feedback, with the agreed 500 ms
+fault-detection → first applied CARLA braking frame gate. Measured max VP
+output gap is 682 ms, so a 0.5 s VP watchdog would false-trip.
 
-Live evidence (run B): two ~2 s VP input dropouts mid-cruise each
-answered with a brief conservative dip (3→~1 m/s, on-lane, full
-recovery, SI never left DRIVE); VP's planning loop never stalled, so
-the dips trace to brief input-side stalls met by the gate. When VP lost
-the lane outright at the fork, the gate held the car stopped on-road
-for 4+ minutes, SI in STOPPED hold, zero collisions. One evidence gap:
-per-container logs rotated before collection, so the dip onsets lack
-xfer traces — compose now pins `max-size/max-file` logging so a full
-run's evidence survives (applies from the next recreate).
+Live evidence (run B) from the predecessor policy stays useful as
+baseline behavior: two ~2 s VP input dropouts mid-cruise each answered
+with a brief conservative dip (3→~1 m/s, on-lane, full recovery, SI never
+left DRIVE); when VP lost the lane outright at the fork, the gate held
+the car stopped on-road for 4+ minutes, SI in STOPPED hold, zero
+collisions. Under the new contract the same dropouts are SI-detected
+(source watchdog → SI stop), not adapter-synthesized. One evidence gap
+from those runs: per-container logs rotated before collection, so compose
+now pins `max-size/max-file` logging so a full run's evidence survives.
 
 ### Unstable lead perception: flicker mid-range, blindness close-range
 
@@ -159,26 +162,33 @@ the lane waypoint), yet VP's first cross-track estimates read ±1.0–1.7 m
 within seconds. SI tracks the path, so the car visibly throws itself
 sideways on launch; once it grazed the right guardrail (~0.65 m/s,
 Town04 spawn 184). Upstream lateral warmup/confidence gating would fix
-it (the adapter already holds on an empty path); untouched so far.
+it (the predecessor adapter held on an empty path; the new one rejects
+the reference and lets SI answer); untouched so far.
 
 ### Lane changes at Town04 splits and merges
 
 VisionPilot can switch between lanes at splits and merges, causing
-weaving or Safety Island `too large yaw error` messages. An empty path produces
-a stop trajectory, and the vehicle can remain stopped. The adapter does not
+weaving or Safety Island `too large yaw error` messages. An invalid or
+empty reference is rejected (no adapter-authored stop); with no fresh
+input SI's selected-source watchdog takes over. The adapter does not
 correct this path-selection limitation.
 
-### Cross-distro, cross-RMW path subscription
+### Cross-distro, cross-RMW reference subscription
 
-The adapter subscribes to VisionPilot's `/vehicle/lane_path` directly across
-the ROS distro (Jazzy to Humble) and RMW (FastDDS to CycloneDDS) boundary.
-This was verified empirically for `nav_msgs/Path` at 10 Hz, including a full
-closed loop, but ROS guarantees neither cross-distro nor cross-vendor
-communication. If the adapter stops publishing trajectories while VisionPilot
-is planning, suspect this boundary first (see also
-[rmw_fastrtps#797](https://github.com/ros2/rmw_fastrtps/issues/797)). Unifying
-both sides on CycloneDDS was tested and does not work (rmw 1.x vs 2.x string
-deserialization mismatch), so keep VisionPilot on its default FastDDS.
+The adapter subscribes to VisionPilot's `/vehicle/driving_reference`
+(`visionpilot_msgs`, from the fork) directly across the ROS distro (Jazzy
+to Humble) and RMW (FastDDS to CycloneDDS) boundary. `nav_msgs/Path` was
+verified empirically at 10 Hz here including a full closed loop, but ROS
+guarantees neither cross-distro nor cross-vendor communication. If the
+adapter stops publishing trajectories while VisionPilot is planning,
+suspect this boundary first (see also
+[rmw_fastrtps#797](https://github.com/ros2/rmw_fastrtps/issues/797)). The
+compound type is small (a few hundred bytes) with reliable depth-1 QoS,
+far easier than the 7 MB image path, and the Humble-side binding is built
+into the adapter image from the same package sources
+(`deploy/images/adapter.Dockerfile`). Unifying both sides on CycloneDDS
+was tested and does not work (rmw 1.x vs 2.x string deserialization
+mismatch), so keep VisionPilot on its default FastDDS.
 
 ### CARLA requires an NVIDIA GPU
 
@@ -246,8 +256,8 @@ implementation: rich motion reference, supervisor gate, and environmental superv
 | Path                                                                                                              | Contents                                                        |
 | ----------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
 | [`deploy/`](deploy/README.md)                                                                                     | Setup, build, Compose services, and runtime configuration       |
-| [`adapter/`](adapter/path_to_trajectory.py)                                                                       | Lane path → Autoware trajectory conversion                      |
-| [`upstream/vision_pilot`](https://github.com/oguzkaganozt/autoware_vision_pilot/tree/feat/lane-path)               | VisionPilot fork that publishes `/vehicle/lane_path`            |
+| [`adapter/`](adapter/path_to_trajectory.py)                                                                       | VP driving reference → Autoware trajectory conversion           |
+| [`upstream/vision_pilot`](https://github.com/oguzkaganozt/autoware_vision_pilot/tree/feat/vp-si-interface)         | VisionPilot fork publishing `/vehicle/driving_{command,reference}` |
 | [`upstream/autoware-safety-island`](https://github.com/autowarefoundation/autoware-safety-island)                  | Pinned Safety Island submodule                                  |
 
 CARLA uses the `carlasim/carla:0.9.16` container image and its Python API.

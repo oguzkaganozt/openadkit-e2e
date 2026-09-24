@@ -1,8 +1,17 @@
-"""Path (base_link) → Autoware Trajectory, sized for the Safety Island.
+"""VP DrivingReference -> Autoware Trajectory, sized for the Safety Island.
 
-VisionPilot publishes a lane-center Path in base_link. The Safety Island
+VisionPilot publishes one compound reference per camera cycle: the lane
+polynomial y = a x^2 + b x + c (base_link) plus the planned speed schedule
+v(t), carrying the camera source stamp of that cycle. The Safety Island
 follower wants autoware_planning_msgs/Trajectory in the same frame as
 odometry, small enough to cross DDS without fragmentation.
+
+A reference is transcribed only when it is valid and an ego sample with
+the exact same source stamp exists (the bridge stamps both with the CARLA
+simulated frame time). Anything else is rejected and nothing is published:
+the adapter never authors a stop trajectory, because a synthesized stop
+would refresh the selected input and mask the fault the Safety Island must
+see. SI owns source freshness and the stop decision.
 
 SI packet budget matches Open AD Kit traj_relay (hardware-validated):
 13 points, 25 m extent, 1200 B serialized. ROS imports stay in main() so
@@ -12,7 +21,6 @@ the functions below test without a ROS install.
 from __future__ import annotations
 
 import math
-import os
 from dataclasses import dataclass
 
 EXTENT_CAP_M = 25.0
@@ -37,28 +45,21 @@ S_LEAD_M = 1.0
 NEAR_ARC_M = (0.25, 0.5, 1.0, 2.0)
 DEFAULT_FRAME_ID = "map"
 
+DEFAULT_INPUT_REFERENCE_TOPIC = "/vehicle/driving_reference"
+DEFAULT_INPUT_ODOM_TOPIC = "/localization/kinematic_state"
+DEFAULT_OUTPUT_TOPIC = "/planning/scenario_planning/trajectory"
+# Exact-frame ego buffer depth (~10 s at 20 Hz). A reference whose stamp
+# fell off the buffer is rejected like any other unmatched frame.
+EGO_BUFFER_DEPTH = 400
+# Reject logging period (s): counters are cumulative, the log is not.
+REJECT_LOG_PERIOD_SEC = 2.0
+
 CDR_ENCAPSULATION_BYTES = 4
 CDR_TIME_BYTES = 8
 CDR_UINT32_BYTES = 4
 CDR_STRING_ALIGNMENT = 4
 CDR_TRAJECTORY_POINT_BYTES = 88
 CDR_TRAJECTORY_POINT_ALIGNMENT = 8
-
-DEFAULT_INPUT_PATH_TOPIC = "/vehicle/lane_path"
-DEFAULT_INPUT_ODOM_TOPIC = "/localization/kinematic_state"
-DEFAULT_INPUT_HORIZON_TOPIC = "/vehicle/speed_horizon"
-DEFAULT_INPUT_ACCEL_TOPIC = "/vehicle/throttle_cmd"
-DEFAULT_OUTPUT_TOPIC = "/planning/scenario_planning/trajectory"
-# Ingress staleness bound (ms). Healthy runs show horizon age 50-270 ms
-# (xfer h_age) and odom at 20 Hz, so 1000 ms is >3x the worst healthy
-# sample — not a copied 0.5 s. Anything older means VP (or the bridge
-# odom feed) is dead, and the answer is an explicit stop trajectory,
-# never silence: SI latches its last trajectory (has_trajectory_ never
-# clears), so silence would drive stale forever.
-STALE_INPUT_MS = 1000.0
-# Watchdog period bound (s). If no fresh Path arrives at all (VP fully
-# dead), the on_path callback never fires, so a timer publishes the stop.
-STOP_WATCHDOG_SEC = 1.0
 
 
 @dataclass(frozen=True)
@@ -221,48 +222,47 @@ def downsample_indices(
     )
 
 
-def stop_trajectory(ego: Pose2D) -> list[TrajectoryPoint]:
-    p1 = transform_to_odom(Pose2D(0.25, 0.0, 0.0), ego)
-    p2 = transform_to_odom(Pose2D(0.50, 0.0, 0.0), ego)
-    return [
-        TrajectoryPoint(ego.x, ego.y, ego.yaw, 0.0, 0.0, acceleration_mps2=-1.0),
-        TrajectoryPoint(p1.x, p1.y, p1.yaw, 0.0, 0.25, acceleration_mps2=-1.0),
-        TrajectoryPoint(p2.x, p2.y, p2.yaw, 0.0, 0.50, acceleration_mps2=-1.0),
-    ]
+def stamp_key(sec: int, nanosec: int) -> tuple[int, int]:
+    """Exact simulator-frame identity: the CARLA sim time on a stamp."""
+    return (int(sec), int(nanosec))
 
 
-def ingress_reason(
-    now_ms: float,
-    horizon_at_ms: float,
-    odom_at_ms: float,
-    stale_ms: float = STALE_INPUT_MS,
+def reference_reason(
+    *,
+    valid: bool,
+    path_valid: bool,
+    has_source_stamp: bool,
+    horizon_len: int,
+    horizon_dt_s: float,
+    x_max_m: float,
 ) -> str:
-    """Why the latest input must not be trusted, or "" when fresh.
+    """Why a VP reference must be rejected, or "" when usable.
 
-    Pure policy: no sequence exists on this wire (Float32MultiArray has
-    no seq field), so arrival age is the only staleness signal. A stale
-    or missing horizon/odom maps to an explicit stop downstream.
+    Pure policy. Rejection is silence for the follower: the adapter never
+    authors a stop, because a synthesized stop would refresh the selected
+    input and mask the very fault SI must detect and answer.
     """
-    if horizon_at_ms <= 0.0:
-        return "no-horizon-yet"
-    if now_ms - horizon_at_ms > stale_ms:
-        return "stale-horizon"
-    if odom_at_ms <= 0.0:
-        return "no-odom-yet"
-    if now_ms - odom_at_ms > stale_ms:
-        return "stale-odom"
+    if not valid:
+        return "invalid-reference"
+    if not has_source_stamp:
+        return "no-source-stamp"
+    if not path_valid or x_max_m <= 0.0:
+        return "no-path"
+    if horizon_len < 2 or horizon_dt_s <= 0.0:
+        return "no-horizon"
     return ""
 
 
-def watchdog_due(
-    now_s: float,
-    last_path_at_s: float,
-    period_s: float = STOP_WATCHDOG_SEC,
-) -> bool:
-    """True when no fresh Path arrived within the watchdog period."""
-    if last_path_at_s <= 0.0:
-        return True
-    return now_s - last_path_at_s > period_s
+def cycle_reason(session: int, cycle: int, last_session: int, last_cycle: int) -> str:
+    """Why this cycle must not be accepted after an earlier one.
+
+    Duplicates and regressions within one VP session are stale data that
+    must not become fresh again by republication; a new session (VP
+    restart) is accepted and resets the comparison.
+    """
+    if session == last_session and cycle <= last_cycle:
+        return "cycle-not-increasing"
+    return ""
 
 
 def sample_horizon(horizon: list[float], t_sec: float, dt_sec: float = HORIZON_DT_SEC) -> float:
@@ -404,9 +404,9 @@ def convert(
     byte_budget: int = SERIALIZED_BYTE_BUDGET,
 ) -> list[TrajectoryPoint] | None:
     if not path_points:
-        return stop_trajectory(ego)
+        return None
     if not speed_horizon and target_velocity_mps is None:
-        return stop_trajectory(ego)
+        return None
 
     world = [transform_to_odom(p, ego) for p in path_points]
     world = resample_path(world)
@@ -509,10 +509,10 @@ def convert(
 def main(args=None) -> None:
     import rclpy
     from autoware_planning_msgs.msg import Trajectory, TrajectoryPoint as TrajMsg
-    from builtin_interfaces.msg import Duration
+    from builtin_interfaces.msg import Duration, Time
     from geometry_msgs.msg import Pose
-    from nav_msgs.msg import Odometry, Path
-    from std_msgs.msg import Float32MultiArray, Float64
+    from nav_msgs.msg import Odometry
+    from visionpilot_msgs.msg import DrivingReference
     import time as time_mod
     from rclpy.executors import ExternalShutdownException
     from rclpy.qos import (
@@ -525,17 +525,11 @@ def main(args=None) -> None:
     rclpy.init(args=args)
     node = rclpy.create_node("path_to_trajectory")
 
-    input_path = node.declare_parameter(
-        "input_path_topic", DEFAULT_INPUT_PATH_TOPIC
+    input_reference = node.declare_parameter(
+        "input_reference_topic", DEFAULT_INPUT_REFERENCE_TOPIC
     ).value
     input_odom = node.declare_parameter(
         "input_odom_topic", DEFAULT_INPUT_ODOM_TOPIC
-    ).value
-    input_horizon = node.declare_parameter(
-        "input_horizon_topic", DEFAULT_INPUT_HORIZON_TOPIC
-    ).value
-    input_accel = node.declare_parameter(
-        "input_accel_topic", DEFAULT_INPUT_ACCEL_TOPIC
     ).value
     output_topic = node.declare_parameter("output_topic", DEFAULT_OUTPUT_TOPIC).value
     v_min = node.declare_parameter("v_min_mps", DEFAULT_V_MIN_MPS).value
@@ -547,14 +541,6 @@ def main(args=None) -> None:
     byte_budget = node.declare_parameter(
         "byte_budget", SERIALIZED_BYTE_BUDGET
     ).value
-    # A/B baseline knob: >0 ignores the VP horizon and drives the VP path
-    # shape at a constant speed through SI. 0.0 (default) = VP horizon.
-    cruise_override = float(
-        node.declare_parameter(
-            "cruise_override_mps",
-            float(os.environ.get("CRUISE_OVERRIDE_MPS", "0.0")),
-        ).value
-    )
 
     qos = QoSProfile(
         depth=1,
@@ -563,17 +549,17 @@ def main(args=None) -> None:
         durability=QoSDurabilityPolicy.VOLATILE,
     )
     publisher = node.create_publisher(Trajectory, output_topic, qos)
-    latest_ego: list[Pose2D | None] = [None]
-    latest_odom_v: list[float] = [0.0]
-    odom_at: list[float] = [0.0]
-    latest_horizon: list[list[float] | None] = [None]
-    latest_accel: list[float | None] = [None]
-    horizon_at: list[float] = [0.0]
-    accel_at: list[float] = [0.0]
+    # Ego samples keyed by the CARLA sim-time stamp on their header: a
+    # reference is transcribed only when its source stamp finds the
+    # identical key, i.e. the path and the pose are from one world frame.
+    ego_by_key: dict[tuple[int, int], tuple[Pose2D, float]] = {}
+    odom_at: dict[tuple[int, int], float] = {}
+    ego_order: list[tuple[int, int]] = []
+    last_session = [-1]
+    last_cycle = [-1]
     published_count = [0]
-    path_at: list[float] = [0.0]
-    stops_published = [0]
-    last_stop_log_at = [0.0]
+    rejects: dict[str, int] = {}
+    last_reject_log_at = [0.0]
 
     def publish_points(points: list[TrajectoryPoint], stamp) -> None:
         out = Trajectory()
@@ -597,75 +583,74 @@ def main(args=None) -> None:
             out.points.append(tp)
         publisher.publish(out)
 
-    def publish_stop(ego: Pose2D, reason: str) -> None:
-        # The defined answer to stale/invalid input: an explicit stop
-        # trajectory, never silence. SI latches its last trajectory, so
-        # silence would drive stale forever.
-        publish_points(stop_trajectory(ego), node.get_clock().now().to_msg())
-        stops_published[0] += 1
+    def reject(reason: str) -> None:
+        # Rejection is silence: the adapter does not author a stop, so a
+        # stale or mismatched reference cannot refresh SI's input. The
+        # counters make the reason visible without log spam.
+        rejects[reason] = rejects.get(reason, 0) + 1
         now = time_mod.monotonic()
-        if now - last_stop_log_at[0] > 2.0:
-            last_stop_log_at[0] = now
-            node.get_logger().warn(
-                "stop #%d reason=%s" % (stops_published[0], reason)
+        if now - last_reject_log_at[0] > REJECT_LOG_PERIOD_SEC:
+            last_reject_log_at[0] = now
+            totals = " ".join(
+                "%s=%d" % (k, v) for k, v in sorted(rejects.items())
             )
+            node.get_logger().warn("reject %s (totals %s)" % (reason, totals))
 
     def on_odom(msg: Odometry) -> None:
         q = msg.pose.pose.orientation
-        latest_ego[0] = Pose2D(
-            msg.pose.pose.position.x,
-            msg.pose.pose.position.y,
-            yaw_from_quaternion(q.x, q.y, q.z, q.w),
+        key = stamp_key(msg.header.stamp.sec, msg.header.stamp.nanosec)
+        if key not in ego_by_key:
+            ego_order.append(key)
+        ego_by_key[key] = (
+            Pose2D(
+                msg.pose.pose.position.x,
+                msg.pose.pose.position.y,
+                yaw_from_quaternion(q.x, q.y, q.z, q.w),
+            ),
+            float(msg.twist.twist.linear.x),
         )
-        latest_odom_v[0] = float(msg.twist.twist.linear.x)
-        odom_at[0] = time_mod.monotonic()
+        odom_at[key] = time_mod.monotonic()
+        while len(ego_order) > EGO_BUFFER_DEPTH:
+            drop = ego_order.pop(0)
+            ego_by_key.pop(drop, None)
+            odom_at.pop(drop, None)
 
-    def on_horizon(msg: Float32MultiArray) -> None:
-        latest_horizon[0] = [float(v) for v in msg.data]
-        horizon_at[0] = time_mod.monotonic()
-
-    def on_accel(msg: Float64) -> None:
-        latest_accel[0] = float(msg.data)
-        accel_at[0] = time_mod.monotonic()
-
-    def on_path(msg: Path) -> None:
-        ego = latest_ego[0]
-        if ego is None:
-            return
-        now = time_mod.monotonic()
-        path_at[0] = now
-        now_ms = now * 1000.0
-        reason = ingress_reason(
-            now_ms, horizon_at[0] * 1000.0, odom_at[0] * 1000.0
+    def on_reference(msg: DrivingReference) -> None:
+        reason = reference_reason(
+            valid=msg.valid,
+            path_valid=msg.path_valid,
+            has_source_stamp=msg.has_source_stamp,
+            horizon_len=len(msg.speed_horizon_mps),
+            horizon_dt_s=msg.horizon_dt_s,
+            x_max_m=msg.path_x_max_m,
         )
-        if reason and cruise_override <= 0.0:
-            publish_stop(ego, reason)
+        if reason:
+            reject(reason)
             return
-        path_points = []
-        for ps in msg.poses:
-            q = ps.pose.orientation
-            path_points.append(
-                Pose2D(
-                    ps.pose.position.x,
-                    ps.pose.position.y,
-                    yaw_from_quaternion(q.x, q.y, q.z, q.w),
-                )
-            )
+        key = stamp_key(msg.source_stamp.sec, msg.source_stamp.nanosec)
+        sample = ego_by_key.get(key)
+        if sample is None:
+            reject("no-same-frame-ego")
+            return
+        reason = cycle_reason(
+            msg.session, msg.cycle, last_session[0], last_cycle[0]
+        )
+        if reason:
+            reject(reason)
+            return
+        ego, odv = sample
+        path_points = sample_quadratic_path(
+            msg.path_a, msg.path_b, msg.path_c, msg.path_x_max_m
+        )
         if not path_points:
-            publish_stop(ego, "empty-path")
+            reject("empty-path")
             return
-        hz = None if cruise_override > 0.0 else latest_horizon[0]
-        if hz is None and cruise_override <= 0.0:
-            publish_stop(ego, "no-horizon-yet")
-            return
+        horizon = [max(0.0, float(v)) for v in msg.speed_horizon_mps]
         points = convert(
             path_points,
             ego,
-            target_velocity_mps=(
-                cruise_override if cruise_override > 0.0 else None
-            ),
-            speed_horizon=hz,
-            vp_accel=latest_accel[0],
+            speed_horizon=horizon,
+            horizon_dt_sec=msg.horizon_dt_s,
             v_min_mps=v_min,
             frame_id=out_frame,
             extent_cap_m=extent_cap,
@@ -673,70 +658,44 @@ def main(args=None) -> None:
             byte_budget=byte_budget,
         )
         if points is None:
-            publish_stop(ego, "bad-shape")
+            reject("bad-shape")
             return
-        publish_points(points, msg.header.stamp)
-        published_count[0] += 1
-        vp_a = latest_accel[0]
-        a_age = (now - accel_at[0]) * 1000.0 if accel_at[0] else -1.0
-        h_age = (now - horizon_at[0]) * 1000.0 if horizon_at[0] else -1.0
-        v0 = points[0].longitudinal_velocity_mps
-        vn = points[-1].longitudinal_velocity_mps
-        a0 = points[0].acceleration_mps2
-        odv = latest_odom_v[0]
-        o_age = (now - odom_at[0]) * 1000.0 if odom_at[0] else -1.0
-        if cruise_override > 0.0:
-            hinfo = "cruise-override %.1f" % cruise_override
-        elif hz:
-            hc = [max(0.0, v) for v in hz]
-            s_h = 0.0
-            for i in range(1, len(hc)):
-                s_h += 0.5 * (hc[i - 1] + hc[i]) * HORIZON_DT_SEC
-            stop0 = next(
-                (i for i, v in enumerate(hc) if v <= 1e-6), -1
-            )
-            hinfo = (
-                f"h0={hc[0]:.2f} hn={hc[-1]:.2f} n={len(hc)} "
-                f"s_h={s_h:.1f} stop0={stop0}"
-            )
-        else:
-            hinfo = "no-horizon"
-        node.get_logger().info(
-            f"xfer #{published_count[0]} vp_a={vp_a if vp_a is not None else 'NA'} "
-            f"a_age={a_age:.0f}ms h_age={h_age:.0f}ms {hinfo} "
-            f"v0={v0:.2f} vn={vn:.2f} traj_a0={a0:.2f} "
-            f"odv={odv:.2f} o_age={o_age:.0f}ms"
+        publish_points(
+            points,
+            Time(
+                sec=int(msg.source_stamp.sec),
+                nanosec=int(msg.source_stamp.nanosec),
+            ),
         )
-
-    def on_watchdog() -> None:
-        # VP fully dead: no Path arrives, so on_path never fires. Publish
-        # the stop on a timer instead of going silent (SI would drive the
-        # last trajectory forever). Also clears the zombie horizon so
-        # motion cannot resume without a fresh Path alongside fresh input.
+        last_session[0] = msg.session
+        last_cycle[0] = msg.cycle
+        published_count[0] += 1
         now = time_mod.monotonic()
-        ego = latest_ego[0]
-        if ego is None:
-            return
-        if watchdog_due(now, path_at[0]):
-            latest_horizon[0] = None
-            horizon_at[0] = 0.0
-            publish_stop(ego, "watchdog-no-path")
+        s_h = 0.0
+        for i in range(1, len(horizon)):
+            s_h += 0.5 * (horizon[i - 1] + horizon[i]) * msg.horizon_dt_s
+        stop0 = next((i for i, v in enumerate(horizon) if v <= 1e-6), -1)
+        size = serialized_size_bytes(len(out_frame), len(points))
+        node.get_logger().info(
+            f"xfer #{published_count[0]} sess={msg.session} cyc={msg.cycle} "
+            f"src={msg.source_stamp.sec}.{msg.source_stamp.nanosec:09d} "
+            f"h0={horizon[0]:.2f} hn={horizon[-1]:.2f} n={len(horizon)} "
+            f"s_h={s_h:.1f} stop0={stop0} "
+            f"v0={points[0].longitudinal_velocity_mps:.2f} "
+            f"vn={points[-1].longitudinal_velocity_mps:.2f} "
+            f"traj_a0={points[0].acceleration_mps2:.2f} odv={odv:.2f} "
+            f"o_age={(now - odom_at.get(key, now)) * 1000.0:.0f}ms "
+            f"pts={len(points)} B={size} rej={sum(rejects.values())}"
+        )
 
     node.create_subscription(Odometry, input_odom, on_odom, qos)
-    node.create_subscription(Path, input_path, on_path, qos)
-    node.create_subscription(Float32MultiArray, input_horizon, on_horizon, qos)
-    node.create_subscription(Float64, input_accel, on_accel, qos)
-    node.create_timer(0.2, on_watchdog)
+    node.create_subscription(DrivingReference, input_reference, on_reference, qos)
+    # No watchdog and no stop publication: silence means "no usable
+    # reference", and the stop decision (and its timing) belongs to SI.
     node.get_logger().info(
-        f"{input_path} + {input_odom} + {input_horizon} -> {output_topic} "
-        f"(≤{point_count} pts, {extent_cap} m, {byte_budget} B, "
-        f"stale>{STALE_INPUT_MS:.0f}ms=stop, watchdog {STOP_WATCHDOG_SEC:.1f}s"
-        + (
-            ", cruise-override %.1f m/s" % cruise_override
-            if cruise_override > 0.0
-            else ""
-        )
-        + ")"
+        f"{input_reference} + {input_odom} -> {output_topic} "
+        f"(same-frame ego match required, rejects are silent; "
+        f"≤{point_count} pts, {extent_cap} m, {byte_budget} B)"
     )
     try:
         rclpy.spin(node)

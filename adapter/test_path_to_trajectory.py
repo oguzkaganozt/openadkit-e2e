@@ -6,20 +6,18 @@ from path_to_trajectory import (
     DEFAULT_V_MIN_MPS,
     EXTENT_CAP_M,
     SERIALIZED_BYTE_BUDGET,
-    STALE_INPUT_MS,
-    STOP_WATCHDOG_SEC,
     TARGET_POINT_COUNT,
     Pose2D,
     convert,
+    cycle_reason,
     horizon_arc_lengths,
-    ingress_reason,
+    reference_reason,
     sample_quadratic_path,
     sample_spatial,
-    stop_trajectory,
     serialized_size_bytes,
+    stamp_key,
     target_speed_mps,
     transform_to_odom,
-    watchdog_due,
     yaw_from_quaternion,
     quaternion_from_yaw,
     wrap_angle,
@@ -62,22 +60,11 @@ class QuadraticPathTests(unittest.TestCase):
 
 
 class ConvertTests(unittest.TestCase):
-    def test_empty_path_is_stop(self):
-        ego = Pose2D(10.0, 20.0, 0.0)
-        out = convert([], ego)
-        self.assertIsNotNone(out)
-        assert out is not None
-        self.assertEqual(len(out), 3)
-        self.assertEqual((out[0].x, out[0].y), (ego.x, ego.y))
-        self.assertAlmostEqual(out[0].longitudinal_velocity_mps, 0.0)
-        self.assertAlmostEqual(out[1].longitudinal_velocity_mps, 0.0)
-        self.assertAlmostEqual(out[2].longitudinal_velocity_mps, 0.0)
-        self.assertGreater(out[1].x, out[0].x)
-
-    def test_stop_trajectory_has_three_points(self):
-        out = stop_trajectory(Pose2D(1.0, 2.0, math.pi / 2.0))
-        self.assertEqual(len(out), 3)
-        self.assertAlmostEqual(out[0].longitudinal_velocity_mps, 0.0)
+    def test_empty_path_is_rejected(self):
+        # No path means no usable reference: reject (None), never a
+        # synthesized stop — the adapter must not refresh SI's input.
+        out = convert([], Pose2D(10.0, 20.0, 0.0))
+        self.assertIsNone(out)
 
     def test_straight_path_in_map(self):
         path = sample_quadratic_path(0.0, 0.0, 0.0, x_max_m=40.0)
@@ -119,11 +106,10 @@ class ConvertTests(unittest.TestCase):
         assert out is not None
         self.assertEqual((out[0].x, out[0].y), (ego.x, ego.y))
 
-    def test_no_horizon_is_stop(self):
+    def test_no_horizon_is_rejected(self):
         path = sample_quadratic_path(0.0, 0.0, 0.0, x_max_m=10.0)
         out = convert(path, Pose2D(0.0, 0.0, 0.0))
-        self.assertEqual(len(out), 3)
-        self.assertAlmostEqual(out[0].longitudinal_velocity_mps, 0.0)
+        self.assertIsNone(out)
 
     def test_arc_lengths_integrate_trapezoid(self):
         self.assertEqual(
@@ -231,54 +217,85 @@ class ConvertTests(unittest.TestCase):
             self.assertAlmostEqual(wrap_angle(yaw_from_quaternion(x, y, z, w)), wrap_angle(yaw))
 
 
-class IngressTests(unittest.TestCase):
-    # Phase 1 fault policy: late / dropped / restarted / bad-shape input
-    # each maps to an explicit stop downstream, never silence.
+class ReferencePolicyTests(unittest.TestCase):
+    # Target fault policy: a rejected reference stays silent; SI owns the
+    # stop. The adapter only accepts a valid reference whose source stamp
+    # matches an ego sample exactly (same CARLA world frame).
 
-    def test_fresh_input_is_trusted(self):
-        self.assertEqual(ingress_reason(5000.0, 4950.0, 4960.0), "")
-
-    def test_no_horizon_yet(self):
-        self.assertEqual(ingress_reason(5000.0, 0.0, 4960.0), "no-horizon-yet")
-
-    def test_late_horizon_is_rejected(self):
-        now = 5000.0
+    def test_usable_reference_is_accepted(self):
         self.assertEqual(
-            ingress_reason(now, now - STALE_INPUT_MS - 1.0, now - 50.0),
-            "stale-horizon",
+            reference_reason(
+                valid=True,
+                path_valid=True,
+                has_source_stamp=True,
+                horizon_len=20,
+                horizon_dt_s=0.05,
+                x_max_m=30.0,
+            ),
+            "",
         )
 
-    def test_boundary_horizon_is_trusted(self):
-        now = 5000.0
+    def test_invalid_flags_are_rejected(self):
+        base = dict(
+            valid=True,
+            path_valid=True,
+            has_source_stamp=True,
+            horizon_len=20,
+            horizon_dt_s=0.05,
+            x_max_m=30.0,
+        )
+        cases = {
+            "invalid-reference": dict(valid=False),
+            "no-source-stamp": dict(has_source_stamp=False),
+            "no-path": dict(path_valid=False),
+            "no-horizon": dict(horizon_len=0),
+        }
+        for want, patch in cases.items():
+            args = dict(base)
+            args.update(patch)
+            self.assertEqual(reference_reason(**args), want)
+
+    def test_zero_x_max_is_no_path(self):
         self.assertEqual(
-            ingress_reason(now, now - STALE_INPUT_MS, now - 50.0), ""
+            reference_reason(
+                valid=True,
+                path_valid=True,
+                has_source_stamp=True,
+                horizon_len=20,
+                horizon_dt_s=0.05,
+                x_max_m=0.0,
+            ),
+            "no-path",
         )
 
-    def test_stale_odom_is_rejected(self):
-        now = 5000.0
+    def test_degenerate_horizon_dt_is_rejected(self):
         self.assertEqual(
-            ingress_reason(now, now - 50.0, now - STALE_INPUT_MS - 1.0),
-            "stale-odom",
+            reference_reason(
+                valid=True,
+                path_valid=True,
+                has_source_stamp=True,
+                horizon_len=20,
+                horizon_dt_s=0.0,
+                x_max_m=30.0,
+            ),
+            "no-horizon",
         )
 
-    def test_watchdog_fires_on_dropped_path(self):
-        self.assertTrue(watchdog_due(10.0, 5.0))
-        self.assertTrue(watchdog_due(10.0, 0.0))
+    def test_cycle_accepts_first_and_new_session(self):
+        self.assertEqual(cycle_reason(7, 0, -1, -1), "")
+        self.assertEqual(cycle_reason(8, 0, 7, 150), "")
 
-    def test_watchdog_quiet_on_fresh_path(self):
-        self.assertFalse(watchdog_due(10.0, 10.0 - STOP_WATCHDOG_SEC))
-        self.assertFalse(watchdog_due(10.0, 9.9))
+    def test_cycle_rejects_duplicate_and_regression(self):
+        self.assertEqual(cycle_reason(7, 150, 7, 150), "cycle-not-increasing")
+        self.assertEqual(cycle_reason(7, 149, 7, 150), "cycle-not-increasing")
 
-    def test_restart_recovers_on_fresh_arrival(self):
-        # After a dropout, the first fresh arrival clears both gates:
-        # ingress trusts it and the watchdog goes quiet.
-        now = 60.0
-        self.assertEqual(ingress_reason(now * 1000.0, now * 1000.0 - 50.0, now * 1000.0 - 50.0), "")
-        self.assertFalse(watchdog_due(now, now))
+    def test_stamp_key_is_exact(self):
+        self.assertEqual(stamp_key(12, 500000000), (12, 500000000))
+        self.assertNotEqual(stamp_key(12, 0), stamp_key(12, 1))
 
-    def test_bad_shape_maps_to_stop(self):
-        # Zero byte budget can never fit a point: convert returns None
-        # and the caller must answer with an explicit stop trajectory.
+    def test_zero_budget_returns_none(self):
+        # convert cannot fit a point into a zero byte budget; the caller
+        # rejects instead of publishing anything.
         path = sample_quadratic_path(0.0, 0.0, 0.0, x_max_m=20.0)
         self.assertIsNone(
             convert(
@@ -288,13 +305,10 @@ class IngressTests(unittest.TestCase):
                 byte_budget=0,
             )
         )
-        stop = stop_trajectory(Pose2D(0.0, 0.0, 0.0))
-        self.assertEqual(len(stop), 3)
-        for p in stop:
-            self.assertAlmostEqual(p.longitudinal_velocity_mps, 0.0)
 
     def test_cruise_override_ignores_horizon(self):
-        # A/B knob: constant speed on the VP path shape, no horizon used.
+        # Library path used by the historical A/B baseline: constant speed
+        # on the VP path shape, no horizon used.
         path = sample_quadratic_path(0.0, 0.0, 0.0, x_max_m=20.0)
         out = convert(
             path, Pose2D(0.0, 0.0, 0.0), target_velocity_mps=3.0,

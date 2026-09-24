@@ -173,8 +173,15 @@ docker run --rm \
 test -x "$SI/build/freertos-posix/actuation_freertos"
 
 echo "Pulling runtime images and building the domain bridge..."
-"${COMPOSE[@]}" pull carla adapter
+"${COMPOSE[@]}" pull carla
 "${COMPOSE[@]}" build domain-bridge
+
+echo "Building the adapter image ($ADAPTER_IMAGE: Autoware runtime + visionpilot_msgs)..."
+docker build \
+  -f "$DEPLOY/images/adapter.Dockerfile" \
+  -t "$ADAPTER_IMAGE" \
+  --build-arg "AUTOWARE_IMAGE=$AUTOWARE_IMAGE" \
+  "$VP/modules/middleware_interfaces/ros2_interface/visionpilot_msgs"
 "${COMPOSE[@]}" config -q
 
 echo "Build complete ($COMPUTE mode)."

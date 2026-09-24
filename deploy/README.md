@@ -95,16 +95,21 @@ Verified: 10 Hz camera, ~2.5 Hz CPU planning, trajectory + SI control nominal.
 
 ## Runtime reference
 
-- **Adapter:** converts `/vehicle/lane_path` from `base_link` to a `map`
-  trajectory, targeting 3 m/s with up to 13 points, a 25 m extent budget, and ≤1200 B.
-- **Stop behavior:** an empty path produces a 0 m/s trajectory. The CARLA bridge
-  drops control commands older than 0.5 s, and stops publishing ego telemetry
-  when the latest CARLA sample is older than 0.2 s instead of republishing it.
+- **Adapter:** accepts `/vehicle/driving_reference` (`visionpilot_msgs`) only
+  when it is valid and an ego sample with the exact same `source_stamp`
+  exists (same CARLA world frame), then transcribes the path polynomial and
+  speed/stop schedule to a `map` trajectory of up to 13 points, a 25 m
+  extent budget, and ≤1300 B. Invalid or unmatched references are rejected
+  and nothing is published — the adapter never authors a stop; the Safety
+  Island owns source freshness and the stop decision.
+- **CARLA bridge:** stamps camera and ego samples with CARLA simulated time
+  (source identity, not host time) and publishes exactly one ego sample per
+  world frame. It drops control commands older than 0.5 s.
 - **CARLA bridge:** uses Python RPC on port 2000 and maps Safety Island's velocity
   and acceleration commands to throttle using feedforward and speed error.
 - **Domains:** VisionPilot (ROS 2 Jazzy, FastDDS) and the adapter (ROS 2 Humble,
   CycloneDDS) use domain 1; Safety Island uses domain 2. The adapter subscribes
-  to VisionPilot's path directly across the distro/RMW boundary (see known
+  to VisionPilot's reference directly across the distro/RMW boundary (see known
   limitations in the [main README](../README.md#known-limitations)); the DDS
   bridge connects domains. Discovery needs a multicast-capable interface
   (`build.sh --dds-interface`); on weak-multicast networks (e.g. Wi-Fi without
@@ -133,9 +138,10 @@ Run adapter tests without ROS:
 python3 -m unittest discover -s adapter -v
 ```
 
-For an SI-only run, omit `--profile vp` from Compose startup. In a ROS 2 Humble
-environment with `ROS_DOMAIN_ID=1`, run `python3 deploy/nodes/fake_path.py`
-to feed a synthetic path to the adapter.
+For an SI-only run, omit `--profile vp` from Compose startup. In the adapter
+image with `ROS_DOMAIN_ID=1`, run `python3 deploy/nodes/fake_reference.py`
+to feed a synthetic VP reference (stamped with the latest ego frame) to the
+adapter.
 
 To rebuild Safety Island directly in its build environment:
 

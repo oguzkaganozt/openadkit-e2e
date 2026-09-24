@@ -2,6 +2,13 @@
 
 **Status:** Proposed. Not implemented yet.
 
+**Update 2026-09-25:** the VP side of this plan is now implemented — the fork
+branch `feat/vp-si-interface` publishes `DrivingCommand` / `DrivingReference`
+(`visionpilot_msgs`) with camera source stamps, and the adapter consumes the
+reference with exact same-frame ego matching (no adapter-authored stops). The
+agreed v0.1 interface details are in the Safety Island #62 control contract;
+the "Today" section below is kept as the pre-implementation baseline.
+
 ## Idea in one line
 
 **VP → SI → GUARD → CARLA.**

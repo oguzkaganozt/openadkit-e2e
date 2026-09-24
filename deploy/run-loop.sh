@@ -120,8 +120,8 @@ started_at="$(date --iso-8601=seconds)"
 wait_for_log openadkit-e2e-carla-bridge "camera frame #" "bridge camera"
 "${COMPOSE[@]}" up -d --force-recreate adapter si visionpilot
 started_at="$(date --iso-8601=seconds)"
-wait_for_log openadkit-e2e-adapter "vehicle/lane_path + /localization/kinematic_state" "adapter subscribed"
-wait_for_log openadkit-e2e-adapter "xfer #" "VP Path + adapter Trajectory"
+wait_for_log openadkit-e2e-adapter "vehicle/driving_reference + /localization/kinematic_state" "adapter subscribed"
+wait_for_log openadkit-e2e-adapter "xfer #" "VP reference + adapter Trajectory"
 wait_for_log openadkit-e2e-visionpilot "plan: tyre=" "VP planning"
 wait_for_log openadkit-e2e-carla-bridge "applied control #" "SI control"
 # PREVIEW_HOST wins; otherwise auto-detect the public IP (link-local EC2-style

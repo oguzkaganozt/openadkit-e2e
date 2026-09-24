@@ -34,15 +34,13 @@ services:
     restart: on-failure
 
   adapter:
-    image: ${AUTOWARE_IMAGE:?Use --env-file config.env}
+    image: ${ADAPTER_IMAGE:-openadkit-e2e-adapter:latest}
     container_name: openadkit-e2e-adapter
     <<: *run-logging
     network_mode: host
     ipc: host
     env_file:
       - config.env
-    environment:
-      - CRUISE_OVERRIDE_MPS=${CRUISE_OVERRIDE_MPS:-0.0}
     volumes:
       - ../adapter:/opt/adapter:ro
       - ./config/cyclonedds.xml:/autoware/cyclonedds.xml:ro
