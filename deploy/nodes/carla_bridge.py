@@ -14,6 +14,7 @@ import os
 import rclpy
 from autoware_control_msgs.msg import Control
 from autoware_vehicle_msgs.msg import SteeringReport
+from builtin_interfaces.msg import Time
 from geometry_msgs.msg import AccelWithCovarianceStamped
 from nav_msgs.msg import Odometry
 from rclpy.executors import ExternalShutdownException
@@ -27,6 +28,23 @@ def _quat_from_yaw(yaw: float):
     return (0.0, 0.0, math.sin(yaw * 0.5), math.cos(yaw * 0.5))
 
 
+def _sim_stamp(seconds: float) -> Time:
+    """CARLA simulated seconds (episode elapsed) as a ROS time message.
+
+    Source identity, not host time: the consumers compare camera and ego
+    samples against this value to join the same simulator frame.
+    """
+    sec = int(seconds)
+    nanosec = int(round((seconds - sec) * 1e9))
+    if nanosec >= 1000000000:
+        sec += 1
+        nanosec -= 1000000000
+    stamp = Time()
+    stamp.sec = sec
+    stamp.nanosec = nanosec
+    return stamp
+
+
 STOP_SPEED_MPS = 0.05
 CRUISE_THROTTLE_PER_MPS = 0.12
 SPEED_P_GAIN = 0.15
@@ -34,7 +52,6 @@ ACCEL_THROTTLE_GAIN = 0.08
 BRAKE_DECEL_GAIN = 0.25
 MAX_THROTTLE = 0.5
 CONTROL_TIMEOUT_SEC = 0.5
-STALE_SAMPLE_TIMEOUT_SEC = 0.2
 
 
 def carla_longitudinal(cmd_v: float, cmd_a: float, actual_v: float) -> tuple[float, float]:
@@ -122,6 +139,7 @@ class CarlaBridge(Node):
         self._pending_ctrl_at = 0.0
         self._ros_image = None
         self._sample = None
+        self._last_frame = None
         self._actual_v = 0.0
         self._max_steer = None
         self._preview_frame = None
@@ -159,7 +177,6 @@ class CarlaBridge(Node):
         self.create_subscription(
             Control, "/control/trajectory_follower/control_cmd", self._on_control, 1
         )
-        self.create_timer(0.05, self._on_timer)
         threading.Thread(target=self._http, daemon=True).start()
         threading.Thread(target=self._preview_loop, daemon=True).start()
         threading.Thread(target=self._snap_loop, daemon=True).start()
@@ -230,16 +247,14 @@ class CarlaBridge(Node):
                 self._camera = None
                 self.get_logger().warn("camera listen failed: %s" % exc)
 
-    def _on_timer(self):
-        with self._lock:
-            sample = self._sample
-        if sample is None:
-            return
-        if time.monotonic() - sample.get("t_monotonic", 0.0) > STALE_SAMPLE_TIMEOUT_SEC:
-            return
+    def _publish_sample(self, sample):
         last_steer = sample.get("steer", self._last_steer)
         qx, qy, qz, qw = _quat_from_yaw(sample["yaw"])
-        stamp = self.get_clock().now().to_msg()
+        # Source identity: stamp with the CARLA simulated time of the
+        # sampled frame (not the publication time) so camera and ego
+        # samples can be joined on the same simulator frame.
+        sim_time = sample.get("sim_time", 0.0)
+        stamp = _sim_stamp(sim_time) if sim_time > 0.0 else self.get_clock().now().to_msg()
 
         odom = Odometry()
         odom.header.stamp = stamp
@@ -297,9 +312,18 @@ class CarlaBridge(Node):
                     if time.monotonic() - ctrl_at > CONTROL_TIMEOUT_SEC:
                         ctrl = carla.VehicleControl(throttle=0.0, brake=0.4, steer=0.0)
                     vehicle.apply_control(ctrl)
+                # Read the world snapshot that the state below belongs to.
+                # If the scenario advances the frame between the reads, the
+                # sample would mix two frames; skip it and retry.
+                snapshot = self._world.get_snapshot()
+                frame = int(snapshot.frame)
+                sim_time = float(snapshot.timestamp.elapsed_seconds)
                 t = vehicle.get_transform()
                 vel = vehicle.get_velocity()
                 acc = vehicle.get_acceleration()
+                if int(self._world.get_snapshot().frame) != frame:
+                    time.sleep(0.005)
+                    continue
                 yaw = -math.radians(t.rotation.yaw)
                 cos_y = math.cos(yaw)
                 sin_y = math.sin(yaw)
@@ -310,6 +334,8 @@ class CarlaBridge(Node):
                 actual_v = cos_y * vel_x + sin_y * vel_y
                 sample = {
                     "t_monotonic": time.monotonic(),
+                    "sim_time": sim_time,
+                    "frame": frame,
                     "x": float(t.location.x),
                     "y": float(-t.location.y),
                     "z": float(t.location.z),
@@ -327,12 +353,19 @@ class CarlaBridge(Node):
                 with self._lock:
                     self._sample = sample
                     self._actual_v = actual_v
+                # Publish exactly once per sampled frame so every frame's
+                # CARLA time appears on the ego topics and can be matched
+                # to a camera frame.
+                if frame != self._last_frame:
+                    self._last_frame = frame
+                    self._publish_sample(sample)
             except RuntimeError as exc:
                 self._vehicle = None
                 self._camera = None
                 self._max_steer = None
+                self._last_frame = None
                 self.get_logger().warn("hero became unavailable: %s" % exc)
-            time.sleep(0.05)
+            time.sleep(0.01)
 
     def _measured_steer(self, vehicle) -> float:
         try:
@@ -346,8 +379,16 @@ class CarlaBridge(Node):
             arr = np.frombuffer(image.raw_data, dtype=np.uint8)
             arr = arr.reshape((image.height, image.width, 4))
             bgr = np.ascontiguousarray(arr[:, :, :3])
+            # image.timestamp is the CARLA capture time (episode seconds);
+            # image.frame is the CARLA frame number of this capture.
             with self._lock:
-                self._ros_image = (image.width, image.height, bgr)
+                self._ros_image = (
+                    image.width,
+                    image.height,
+                    bgr,
+                    float(image.timestamp),
+                    int(image.frame),
+                )
                 self._preview_frame = bgr
             self._camera_count += 1
             if self._camera_count == 1 or self._camera_count % 50 == 0:
@@ -367,10 +408,16 @@ class CarlaBridge(Node):
             if item is None:
                 time.sleep(0.005)
                 continue
-            width, height, bgr = item
+            width, height, bgr, capture_time, frame = item
             try:
                 msg = Image()
-                msg.header.stamp = self.get_clock().now().to_msg()
+                # Source identity: the CARLA capture time, not publication
+                # time. VisionPilot preserves this stamp so its outputs can
+                # be joined with the ego sample of the same frame.
+                if capture_time > 0.0:
+                    msg.header.stamp = _sim_stamp(capture_time)
+                else:
+                    msg.header.stamp = self.get_clock().now().to_msg()
                 msg.header.frame_id = "hero/main_cam"
                 msg.height = height
                 msg.width = width
@@ -381,6 +428,10 @@ class CarlaBridge(Node):
                 data.frombytes(bgr)
                 msg.data = data
                 self.image_pub.publish(msg)
+                if frame % 50 == 0:
+                    self.get_logger().debug(
+                        "image frame=%d capture=%.3f" % (frame, capture_time)
+                    )
             except Exception as exc:
                 self.get_logger().error("image publish: %s" % exc)
 
