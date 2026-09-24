@@ -22,6 +22,9 @@ ARG AUTOWARE_IMAGE=ghcr.io/autowarefoundation/autoware:universe-20250207
 FROM ${AUTOWARE_IMAGE} AS autoware
 
 FROM ros:humble-ros-base AS msgs-builder
+# The Autoware setup script is bash-only (bashisms inside local_setup.bash
+# die under dash with "Bad substitution"), so run every step with bash.
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 COPY --from=autoware /opt/autoware /opt/autoware
 COPY --from=vpmsgs / /src/visionpilot_msgs
 COPY --from=simsgs / /src/safety_island_msgs
