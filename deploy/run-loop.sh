@@ -79,7 +79,12 @@ wait_for_carla() {
       echo "CARLA ready"
       return 0
     fi
-    if docker exec openadkit-e2e-carla-bridge python3 -c \
+    # Fallback probe through the bridge container only when it is actually
+    # running: this function must not depend on a service that the loop has
+    # not started yet (it may also have been stopped on purpose to keep the
+    # world wipe client-free).
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^openadkit-e2e-carla-bridge$' && \
+      docker exec openadkit-e2e-carla-bridge python3 -c \
       "import carla; c = carla.Client('127.0.0.1', 2000); c.set_timeout(2); c.get_world()" \
       >/dev/null 2>&1; then
       echo "CARLA ready"
@@ -88,6 +93,7 @@ wait_for_carla() {
     sleep 2
   done
   echo "CARLA did not become ready" >&2
+  echo "Hint: install the host CARLA wheel venv (deploy/build.sh) or set CARLA_PY to a python with the carla module." >&2
   docker logs --tail 50 openadkit-e2e-carla >&2 || true
   return 1
 }
@@ -100,6 +106,15 @@ fi
 
 pkill -f "$SI_BIN" 2>/dev/null || true
 pkill -f "$ROOT/deploy/nodes/scenario.py" 2>/dev/null || true
+
+# No CARLA client may be attached while the scenario replaces the world.
+# A live sensor listener across a load_world leaves the 0.9.16 server
+# pumping requests for dead streams ("Invalid session: no stream available
+# with id N", ~550/s) until its RPC starves and every client times out;
+# restart: on-failure can also resurrect a crashed client mid-wipe. Stop
+# them explicitly; each stage below recreates its service afterwards.
+# (Observed 2026-09-25: required a CARLA recreate to recover.)
+"${COMPOSE[@]}" stop carla-bridge visionpilot adapter si scenario 2>/dev/null || true
 
 "${COMPOSE[@]}" up -d carla
 wait_for_carla
