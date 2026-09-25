@@ -144,6 +144,15 @@ Evidence:
   next minutes (another SI latch stopped the car again ~400 m later).
 - The deliberate VP-container stop test (22:57) shows the same 1.0 s
   supervisor path: stop issued 22:57:24.657 → latch 22:57:25.725.
+- 2026-09-25 09:44–09:46 UTC, **new rig host** (vast.ai RTX 4060 Ti):
+  much worse cadence — 26 adapter arrival gaps > 0.5 s within 542 samples
+  over ~90 s, largest **9.33 s**, several 1.2–3.4 s; the SI latched six
+  times in ~3 minutes (`fault_id 1..6`, each `trajectory ... arrived
+  ~1.0–1.1 s ago`). Inputs and resources were healthy in the same window:
+  camera stream had **0** stall warnings, host load 4.35 on 23 vCPU, GPU
+  38% / 4.6 of 16 GB, VP container ~110% CPU, no cgroup quota, and no VP
+  error lines. The moving applied-stop gate test only succeeded because
+  its preflight found one NORMAL window at 8 m/s.
 
 Status + follow-up: confirmed (≥3 stalls observed). This is the top rig
 blocker: the vehicle cannot complete a long autonomous run while the
