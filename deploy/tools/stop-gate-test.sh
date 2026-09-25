@@ -97,6 +97,17 @@ if ((latch_ms < inject_ms)); then
   latch_ms=$((latch_ms + 86400000))
 fi
 
+# The SI states how old the source was at detection ("arrived X s ago"):
+# that is the true source watchdog latency. detection_ms above additionally
+# includes the source container's own shutdown time (for multi-node Autoware
+# the docker stop grace period can dominate it).
+fault_line="$(find_first "$SI_CONTAINER" "SI fault:" || true)"
+si_watchdog_ms=""
+if [[ -n "$fault_line" ]]; then
+  age="$(grep -oE 'arrived [0-9.]+ s ago' <<<"$fault_line" | grep -oE '[0-9.]+' | head -1)"
+  [[ -n "$age" ]] && si_watchdog_ms="$(awk -v a="$age" 'BEGIN {printf "%d", a*1000}')"
+fi
+
 recv_ns="$(grep -oE 'wall_ns=[0-9]+' <<<"$recv_line" | head -1 | cut -d= -f2)"
 applied_ns="$(grep -oE 'wall_ns=[0-9]+' <<<"$applied_line" | head -1 | cut -d= -f2)"
 [[ -n "$recv_ns" && -n "$applied_ns" ]] || {
@@ -117,6 +128,9 @@ log_section "result"
 printf 'detection_latency_ms: %d\n' "$detection_ms"
 printf 'si_to_actuator_transport_ms: %d\n' "$transport_ms"
 printf 'applied_gate_ms: %d\n' "$applied_gate_ms"
+if [[ -n "$si_watchdog_ms" ]]; then
+  printf 'si_source_watchdog_ms: %s\n' "$si_watchdog_ms"
+fi
 if ((applied_gate_ms <= 500)); then
   echo "GATE PASS (<= 500 ms from SI detection to CARLA-applied stop)"
 else
