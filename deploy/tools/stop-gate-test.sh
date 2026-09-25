@@ -21,10 +21,11 @@ set -euo pipefail
 
 SI_CONTAINER="${SI_CONTAINER:-openadkit-e2e-si}"
 ACTUATOR_CONTAINER="${ACTUATOR_CONTAINER:-openadkit-e2e-carla-actuator}"
+SCENARIO_CONTAINER="${SCENARIO_CONTAINER:-openadkit-e2e-scenario}"
 SOURCE_CONTAINER="${SOURCE_CONTAINER:-openadkit-e2e-adapter}"
 WAIT_SEC="${WAIT_SEC:-20}"
 PREFLIGHT_SEC="${PREFLIGHT_SEC:-10}"
-NORMAL_WINDOW_SEC="${NORMAL_WINDOW_SEC:-15}"
+MIN_SPEED_MPS="${MIN_SPEED_MPS:-1.0}"
 
 log_section() {
   echo
@@ -37,10 +38,15 @@ if docker logs --since "${PREFLIGHT_SEC}s" "$SI_CONTAINER" 2>&1 | grep -qa "SI_S
   echo "FAIL: SI latched within the last ${PREFLIGHT_SEC}s; fix the rig before measuring" >&2
   exit 1
 fi
-if ! docker logs --since "${NORMAL_WINDOW_SEC}s" "$ACTUATOR_CONTAINER" 2>&1 | grep -qa "decision=0"; then
-  echo "FAIL: no NORMAL applied control in the last ${NORMAL_WINDOW_SEC}s; is the car driving?" >&2
+# The measurement must start from a moving car: read CARLA ground-truth speed
+# from the scenario telemetry, not from the actuator's periodic log lines.
+speed_line="$(docker logs --since 5s "$SCENARIO_CONTAINER" 2>&1 | grep -a "INFO: pose" | tail -1)"
+speed="$(grep -oE "v=[0-9.]+" <<<"$speed_line" | cut -d= -f2)"
+if [[ -z "$speed" ]] || ! awk -v s="$speed" -v m="$MIN_SPEED_MPS" 'BEGIN {exit !(s >= m)}'; then
+  echo "FAIL: CARLA ground speed ${speed:-unknown} < ${MIN_SPEED_MPS} m/s; wait for driving" >&2
   exit 1
 fi
+echo "preflight ground speed: ${speed} m/s"
 
 inject_iso="$(date --iso-8601=seconds)"
 inject_ms="$(date +%s%3N)"
