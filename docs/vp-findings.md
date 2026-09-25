@@ -354,18 +354,46 @@ old / +0.020 new); the large post-crash differences (old +0.2..+0.34, new
 is fixed for correctness, but it is **not** the dominant high-speed
 lane-keeping cause.
 
-What the new trace shows instead: the raw camera CTE tracks the drift up
-(+0.48 → +1.55 m as the car goes left), then flips to −1.54 m within 0.23 s
-at sim t≈36.6 while CARLA ground truth still reports the car +1.4 → +2.5 m
-left; the particle-filtered CTE follows slowly (−0.3..−0.6 m/s) and the
-commanded tire angle stays below 0.05 rad. The departure begins ~2.5 s
-earlier (sim t≈35) with the road curve already established (camera κ ≈ 0.005)
-and no AD contribution. The leading candidate remains VP's lane
-measurement/fusion under lateral load (hypothesis switch or sign flip near
-the lane edge), not the AutoDrive warp, the actuator or the SI.
+What the new trace shows instead: the raw camera CTE tracks the growing offset
+(+0.48 → +1.55 m, the same sign as CARLA's +1.4 → +2.5 m), then flips to
+−1.54 m within 0.23 s at sim t≈36.6; the particle-filtered CTE follows slowly
+(−0.3..−0.6 m/s) and the commanded tire angle stays below 0.05 rad. The
+departure begins ~2.5 s earlier (sim t≈35) with the road curve already
+established (camera κ ≈ 0.005): the car's yaw rate collapses from ≈0.05 rad/s
+(following the curve) to ≈0.004 rad/s (essentially straight) while the road
+still requires ≈0.050 rad/s (v·κ at 9 m/s), and the controller does not
+command the sustained curve angle (the steady-state bicycle angle would be
+L·κ ≈ 0.016 rad). The leading candidate remains VP's lane
+measurement/fusion and the lateral command under load (estimate lag and a
+near-lane-edge measurement flip), not the AutoDrive warp, the actuator or the
+SI.
 
 Evidence: `/tmp/opencode/vpcontrol-cfix9-{vp,scenario,si}.log`,
 `/tmp/opencode/steer-trace-cfix9.csv` (local temporary evidence).
+
+## 010 — High-speed survival is route-dependent; the SI rejects an out-of-envelope VP accel
+
+Same rig and same 9 m/s VP_CONTROL limit, only the spawn section differs
+(fresh empty-rig worlds, `vision_pilot.diag9.conf`, read-only 20 Hz trace):
+- **spawn 184** (our default): guardrail contact at sim t=37–41 s, ~120–140 m
+  (009).
+- **spawn 100** (the PR #422 `carla916.json` spawn): no collision at all; the
+  car covered **614 m**. First |lane offset| > 1.5 m at ~478 m; max |offset|
+  2.26 m; the run ended when the SI latched `vp accel out of range`: VP
+  commanded **−7.513 m/s²** (cycle 547) against the SI actuation limit
+  **±6.0 m/s²**; the SI refused it and applied its own stop payload
+  (brake 0.400), stopping the car on-road at lane −1.85 m.
+
+So the high-speed lane-keeping failure is strongly route-dependent, and
+upstream's spawn choice is part of why their demo can hold a long run. Lane
+wandering to ±2 m at 9 m/s is still not acceptable lane keeping, and the
+spawn-184 curve remains a deterministic counterexample at this speed.
+Separately, the −7.5 m/s² command is a VP longitudinal-control excursion; the
+SI's independent envelope check turned it into a safe stop, exactly the
+behavior the architecture requires in VP_CONTROL mode.
+
+Evidence: `/tmp/opencode/vpcontrol-spawn100-{vp,scenario,si}.log`,
+`/tmp/opencode/steer-trace-spawn100.csv` (local temporary evidence).
 
 ## Template for new entries
 
