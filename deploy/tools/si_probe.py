@@ -58,6 +58,8 @@ class SiProbe(Node):
         self.done = False
         self.approved_count = 0
         self.decisions = {0: 0, 1: 0, 2: 0}
+        self.modes = {}
+        self.selected_sources = {}
         self.stop_payloads = 0
         self.sessions = {}
         self.last_seq = None
@@ -83,6 +85,10 @@ class SiProbe(Node):
         if decision in self.decisions:
             self.decisions[decision] += 1
             self.window[decision] = self.window.get(decision, 0) + 1
+        mode = int(msg.mode)
+        source = int(msg.selected_source)
+        self.modes[mode] = self.modes.get(mode, 0) + 1
+        self.selected_sources[source] = self.selected_sources.get(source, 0) + 1
         if decision == 1:
             control = msg.control
             if (
@@ -143,6 +149,8 @@ class SiProbe(Node):
             "decisions": {
                 DECISION_NAMES.get(k, k): v for k, v in self.decisions.items()
             },
+            "modes": self.modes,
+            "selected_sources": self.selected_sources,
             "stop_payloads": self.stop_payloads,
             "sessions": sessions_out,
             "faults_per_session": {

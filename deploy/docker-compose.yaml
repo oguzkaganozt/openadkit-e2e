@@ -41,6 +41,7 @@ services:
     restart: "no"
 
   adapter:
+    profiles: ["vp"]
     image: ${ADAPTER_IMAGE:-openadkit-e2e-adapter:latest}
     container_name: openadkit-e2e-adapter
     <<: *run-logging
@@ -141,6 +142,73 @@ services:
       - source /opt/ros/jazzy/setup.bash && exec /usr/bin/VisionPilot --no-window
     restart: "no"
 
+  # Autoware supplies a Lanelet2 route and trajectory, never vehicle/control
+  # output. CARLA ground truth and /clock come from carla-bridge (domain 1).
+  autoware-planning:
+    profiles: ["autoware"]
+    image: ${AUTOWARE_IMAGE:?Use --env-file config.env}
+    container_name: openadkit-e2e-autoware-planning
+    <<: *run-logging
+    network_mode: host
+    ipc: host
+    env_file:
+      - config.env
+    volumes:
+      - ./autoware:/opt/rig-autoware:ro
+      - ./maps/town04:/opt/maps/town04:ro
+      - ./config/cyclonedds.xml:/autoware/cyclonedds.xml:ro
+    entrypoint: ["/bin/bash", "-lc"]
+    command:
+      - >-
+        source /opt/ros/$${ROS_DISTRO}/setup.bash &&
+        source /opt/autoware/setup.bash &&
+        exec ros2 launch /opt/rig-autoware/planning_only.launch.xml
+        map_path:=/opt/maps/town04
+    restart: "no"
+
+  odom-to-tf:
+    profiles: ["autoware"]
+    image: ${AUTOWARE_IMAGE:?Use --env-file config.env}
+    container_name: openadkit-e2e-odom-to-tf
+    <<: *run-logging
+    network_mode: host
+    ipc: host
+    env_file:
+      - config.env
+    volumes:
+      - ./nodes:/opt/nodes:ro
+      - ./config/cyclonedds.xml:/autoware/cyclonedds.xml:ro
+    command: >
+      bash -lc "source /opt/ros/$${ROS_DISTRO}/setup.bash &&
+      source /opt/autoware/setup.bash &&
+      exec python3 /opt/nodes/odom_to_tf.py"
+    depends_on:
+      - carla-bridge
+    restart: "no"
+
+  # Planning needs an explicit objects sample even in a lead-free world.
+  # This fixture refuses to start for a scenario with NPCs or a lead vehicle.
+  empty-scene:
+    profiles: ["autoware"]
+    image: ${AUTOWARE_IMAGE:?Use --env-file config.env}
+    container_name: openadkit-e2e-empty-scene
+    <<: *run-logging
+    network_mode: host
+    ipc: host
+    env_file:
+      - config.env
+    volumes:
+      - ./nodes:/opt/nodes:ro
+      - ./config/${RIG_JSON:-carla-rig-empty.json}:/opt/config/carla-rig.json:ro
+      - ./config/cyclonedds.xml:/autoware/cyclonedds.xml:ro
+    command: >
+      bash -lc "source /opt/ros/$${ROS_DISTRO}/setup.bash &&
+      source /opt/autoware/setup.bash &&
+      exec python3 /opt/nodes/empty_scene.py"
+    depends_on:
+      - carla-bridge
+    restart: "no"
+
   scenario:
     image: ${AUTOWARE_IMAGE:?Use --env-file config.env}
     container_name: openadkit-e2e-scenario
@@ -177,5 +245,4 @@ services:
     depends_on:
       - domain-bridge
       - carla-bridge
-      - adapter
     restart: "no"

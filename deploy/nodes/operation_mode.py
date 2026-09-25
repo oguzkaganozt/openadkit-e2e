@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Stub /system/operation_mode/state so the SI follower is under control."""
+"""Stub /system/operation_mode/state for SI and planning-only Autoware."""
 
 import rclpy
 from autoware_adapi_v1_msgs.msg import OperationModeState
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 
 AUTONOMOUS = 2
 
@@ -12,7 +13,9 @@ class OperationModeStub(Node):
     def __init__(self):
         super().__init__("operation_mode_stub")
         self.pub = self.create_publisher(
-            OperationModeState, "/system/operation_mode/state", 1
+            OperationModeState, "/system/operation_mode/state",
+            QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                       durability=DurabilityPolicy.TRANSIENT_LOCAL),
         )
         self.create_timer(0.1, self._tick)
 

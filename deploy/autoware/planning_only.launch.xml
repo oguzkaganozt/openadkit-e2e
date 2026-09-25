@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Town04 CARLA plant + SI controller: Autoware supplies only map and planning.
+     In contrast to planning_simulator.launch.xml, this does NOT launch a
+     dummy vehicle, localization, vehicle interface, or control writer. -->
+<launch>
+  <arg name="map_path" description="Pinned Town04 Lanelet2 and pointcloud map directory"/>
+  <include file="$(find-pkg-share autoware_launch)/launch/autoware.launch.xml">
+    <arg name="map_path" value="$(var map_path)"/>
+    <arg name="vehicle_model" value="sample_vehicle"/>
+    <arg name="sensor_model" value="sample_sensor_kit"/>
+    <arg name="launch_vehicle" value="false"/>
+    <arg name="launch_system" value="false"/>
+    <arg name="launch_map" value="true"/>
+    <arg name="launch_sensing" value="false"/>
+    <arg name="launch_localization" value="false"/>
+    <arg name="launch_perception" value="false"/>
+    <arg name="launch_planning" value="true"/>
+    <arg name="launch_control" value="false"/>
+    <arg name="launch_api" value="false"/>
+    <arg name="use_sim_time" value="true"/>
+    <arg name="enable_all_modules_auto_mode" value="true"/>
+    <arg name="is_simulation" value="true"/>
+    <arg name="rviz" value="false"/>
+  </include>
+</launch>

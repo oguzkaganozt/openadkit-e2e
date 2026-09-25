@@ -1,26 +1,36 @@
 #!/usr/bin/env bash
-# One clean SI drive: start the scenario, wait for a trajectory, then start SI.
+# One clean SI drive: VP or Autoware planning -> SI -> CARLA.
 # Compute mode: --cpu | --gpu, or COMPUTE=cpu|gpu (default: auto-detect).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT/deploy"
-# Rig selection: RIG_JSON=carla-rig-empty.json for lead-free A/B runs.
-RIG_JSON="${RIG_JSON:-carla-rig.json}"
+# Candidate selection: the two configurations use the same Town04 CARLA rig
+# and SI follower, but exactly one planning source runs per attempt.
+RIG_MODE="${RIG_MODE:-vp}"
+case "$RIG_MODE" in
+  vp) RIG_JSON="${RIG_JSON:-carla-rig.json}" ;;
+  autoware) RIG_JSON="${RIG_JSON:-carla-rig-empty.json}" ;;
+  *) echo "Invalid RIG_MODE '$RIG_MODE' (expected vp or autoware)" >&2; exit 2 ;;
+esac
 export RIG_JSON
 # Supervision mode selects which built binary is staged at the path compose
 # mounts: si (follower drives the selected trajectory source) or vp
 # (VisionPilot command checked and passed through, never recomputed). Build
 # the two binaries with:
-#   ./build.sh --platform freertos-posix -d build/freertos-posix    ...            (si)
+#   ./build.sh --platform freertos-posix -d build/freertos-posix-si ...            (si)
 #   ./build.sh --platform freertos-posix -d build/freertos-posix-vp ... --supervision-mode vp
 SI_MODE="${SI_MODE:-si}"
 SI_BIN="$ROOT/upstream/autoware-safety-island/build/freertos-posix/actuation_freertos"
 case "$SI_MODE" in
-  si) SI_BIN_SRC="$ROOT/upstream/autoware-safety-island/build/freertos-posix/actuation_freertos" ;;
+  si) SI_BIN_SRC="$ROOT/upstream/autoware-safety-island/build/freertos-posix-si/actuation_freertos" ;;
   vp) SI_BIN_SRC="$ROOT/upstream/autoware-safety-island/build/freertos-posix-vp/actuation_freertos" ;;
   *) echo "Invalid SI_MODE '$SI_MODE' (expected si or vp)" >&2; exit 2 ;;
 esac
-COMPOSE=(docker compose --env-file config.env --profile vp)
+if [[ "$RIG_MODE" == "autoware" && "$SI_MODE" != "si" ]]; then
+  echo "Autoware trajectory requires SI_MODE=si (SI_CONTROL)" >&2
+  exit 2
+fi
+COMPOSE=(docker compose --env-file config.env --profile "$RIG_MODE")
 
 COMPUTE="${COMPUTE:-auto}"
 while (($#)); do
@@ -34,7 +44,7 @@ while (($#)); do
       shift
       ;;
     -h|--help)
-      echo "Usage: ./deploy/run-loop.sh [--cpu|--gpu]"
+      echo "Usage: RIG_MODE=vp|autoware SI_MODE=si|vp ./deploy/run-loop.sh [--cpu|--gpu]"
       exit 0
       ;;
     *)
@@ -116,9 +126,31 @@ if [[ ! -x "$SI_BIN_SRC" ]]; then
   exit 1
 fi
 echo "SI supervision mode: $SI_MODE ($SI_BIN_SRC)"
+echo "Rig candidate: $RIG_MODE ($RIG_JSON)"
+if [[ "$RIG_MODE" == "autoware" ]]; then
+  python3 - "$ROOT/deploy/config/$RIG_JSON" <<'PY'
+import json
+import sys
 
-pkill -f "$SI_BIN" 2>/dev/null || true
-pkill -f "$ROOT/deploy/nodes/scenario.py" 2>/dev/null || true
+with open(sys.argv[1], encoding="utf-8") as config_file:
+    config = json.load(config_file)
+if config.get("npc_vehicles") != [] or \
+        config.get("lead_vehicle", {}).get("enabled") is not False:
+    raise SystemExit("Autoware empty-scene profile requires no NPCs and no lead vehicle")
+PY
+  for map_file in lanelet2_map.osm pointcloud_map.pcd map_projector_info.yaml; do
+    if [[ ! -s "$ROOT/deploy/maps/town04/$map_file" ]]; then
+      echo "Missing Town04 $map_file; run $ROOT/deploy/tools/fetch-town04-map.sh first" >&2
+      exit 1
+    fi
+  done
+  printf '%s  %s\n' \
+    '41e9149cfc74621d48a4af22b66fca90a12e51792779913106c9ac2ab73019ef' \
+    "$ROOT/deploy/maps/town04/lanelet2_map.osm" | sha256sum -c --status -
+  printf '%s  %s\n' \
+    '9703b93441a5f5854b6e7cbb31a4d0d4043fe1080b57dfd5c784d5095f811593' \
+    "$ROOT/deploy/maps/town04/pointcloud_map.pcd" | sha256sum -c --status -
+fi
 
 # Every attempt starts from zero: tear the whole project down (containers,
 # not images) so no CARLA client, listener, or half-wiped world survives a
@@ -132,10 +164,20 @@ pkill -f "$ROOT/deploy/nodes/scenario.py" 2>/dev/null || true
 # Belt and braces: remove any deterministic-name container Compose does not
 # own (ad-hoc probe runs) that could still hold a CARLA client.
 for name in openadkit-e2e-carla openadkit-e2e-scenario openadkit-e2e-carla-bridge \
-            openadkit-e2e-adapter openadkit-e2e-si openadkit-e2e-visionpilot \
-            openadkit-e2e-bridge openadkit-e2e-operation-mode; do
+             openadkit-e2e-adapter openadkit-e2e-si openadkit-e2e-visionpilot \
+             openadkit-e2e-bridge openadkit-e2e-operation-mode \
+             openadkit-e2e-autoware-planning openadkit-e2e-odom-to-tf \
+             openadkit-e2e-empty-scene; do
   docker rm -f "$name" >/dev/null 2>&1 || true
 done
+# Kill only host-launched instances of these two programs by their exact
+# argv, never a broad pkill -f pattern that can match its own shell.
+while read -r pid; do
+  kill "$pid" 2>/dev/null || true
+done < <(ps -eo pid=,args= | awk -v bin="$SI_BIN" -v scenario="$ROOT/deploy/nodes/scenario.py" '
+  { pid=$1; $1=""; sub(/^ +/, ""); n=split($0, arg, " ");
+    if (arg[1]==bin || (n>1 && arg[1] ~ /(^|\/)python[0-9.]*$/ && arg[2]==scenario)) print pid
+  }')
 
 # Stage the selected supervision mode's binary at the fixed path the compose
 # si service mounts. Safe here: the down above removed the si container and
@@ -150,20 +192,34 @@ wait_for_carla
 # holding CARLA handles must (re)start after it. Always recreate (never
 # restart): a world wipe must also reset VP latch/odom/fusion state and
 # pick up rebuilt images, with clean per-run logs.
-"${COMPOSE[@]}" up -d --force-recreate scenario
+"${COMPOSE[@]}" up -d --no-deps --force-recreate scenario
 started_at="$(date --iso-8601=seconds)"
 wait_for_log openadkit-e2e-scenario "ego up" "CARLA scenario"
 if python3 -c "import json,sys,os; sys.exit(0 if json.load(open('$ROOT/deploy/config/' + os.environ.get('RIG_JSON', 'carla-rig.json'))).get('lead_vehicle', {}).get('enabled') else 1)"; then
   wait_for_log openadkit-e2e-scenario "lead on-lane" "lead vehicle"
 fi
-"${COMPOSE[@]}" up -d --force-recreate carla-bridge
+"${COMPOSE[@]}" up -d --no-deps --force-recreate carla-bridge
 started_at="$(date --iso-8601=seconds)"
 wait_for_log openadkit-e2e-carla-bridge "camera frame #" "bridge camera"
-"${COMPOSE[@]}" up -d --force-recreate adapter si visionpilot
+if [[ "$RIG_MODE" == "vp" ]]; then
+  "${COMPOSE[@]}" up -d --no-deps --force-recreate adapter visionpilot
+  started_at="$(date --iso-8601=seconds)"
+  wait_for_log openadkit-e2e-adapter "vehicle/driving_reference + /localization/kinematic_state" "adapter subscribed"
+  wait_for_log openadkit-e2e-adapter "xfer #" "VP reference + adapter Trajectory"
+  wait_for_log openadkit-e2e-visionpilot "plan: tyre=" "VP planning"
+else
+  started_at="$(date --iso-8601=seconds)"
+  "${COMPOSE[@]}" up -d --no-deps --force-recreate autoware-planning odom-to-tf empty-scene
+  wait_for_log openadkit-e2e-empty-scene "empty-scene fixture active" "empty scene"
+  echo "Waiting for Autoware route and nonempty trajectory (no SI until ready)..."
+  if ! docker exec openadkit-e2e-autoware-planning bash -lc \
+    'source /opt/ros/$ROS_DISTRO/setup.bash && source /opt/autoware/setup.bash && python3 /opt/rig-autoware/set_route.py'; then
+    docker logs --tail 150 openadkit-e2e-autoware-planning >&2 || true
+    exit 1
+  fi
+fi
+"${COMPOSE[@]}" up -d --no-deps --force-recreate si
 started_at="$(date --iso-8601=seconds)"
-wait_for_log openadkit-e2e-adapter "vehicle/driving_reference + /localization/kinematic_state" "adapter subscribed"
-wait_for_log openadkit-e2e-adapter "xfer #" "VP reference + adapter Trajectory"
-wait_for_log openadkit-e2e-visionpilot "plan: tyre=" "VP planning"
 wait_for_log openadkit-e2e-carla-bridge "applied control #" "SI control"
 # PREVIEW_HOST wins; otherwise auto-detect the public IP (link-local EC2-style
 # metadata, then a public echo service), else fall back to local addresses.
