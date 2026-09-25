@@ -24,6 +24,7 @@ Runs on the SI DDS domain in the adapter image (carries safety_island_msgs):
 """
 
 import math
+import os
 import threading
 import time
 
@@ -52,6 +53,12 @@ SPEED_P_GAIN = 0.15
 ACCEL_THROTTLE_GAIN = 0.08
 BRAKE_DECEL_GAIN = 0.25
 MAX_THROTTLE = 0.5
+# CARLA scales the wheel angle by the vehicle's speed-dependent
+# steering_curve (e.g. 0.87 at 9 m/s on the rig car), so steer = tire/max_steer
+# under-delivers the approved tire angle at speed (finding 013). Divide by the
+# curve to realise the contract's tire angle. ACTUATOR_STEER_CURVE_COMP=0 keeps
+# the old mapping for A/B runs.
+STEER_CURVE_COMP = os.environ.get("ACTUATOR_STEER_CURVE_COMP", "1") != "0"
 APPLIED_LOG_INTERVAL = 100
 SILENCE_LOG_SEC = 5.0
 
@@ -73,6 +80,24 @@ def carla_longitudinal(cmd_v: float, cmd_a: float, actual_v: float) -> tuple[flo
     return max(0.0, min(MAX_THROTTLE, throttle)), 0.0
 
 
+def steering_curve_factor(curve: list[tuple[float, float]], speed_mps: float) -> float:
+    """Linear interpolation of CARLA's (km/h, factor) steering curve."""
+    if not curve:
+        return 1.0
+    kmh = abs(speed_mps) * 3.6
+    if kmh <= curve[0][0]:
+        factor = curve[0][1]
+    elif kmh >= curve[-1][0]:
+        factor = curve[-1][1]
+    else:
+        factor = curve[-1][1]
+        for (x0, y0), (x1, y1) in zip(curve, curve[1:]):
+            if x0 <= kmh <= x1:
+                factor = y0 + (y1 - y0) * (kmh - x0) / (x1 - x0) if x1 > x0 else y1
+                break
+    return factor if factor > 1e-3 else 1.0
+
+
 class CarlaActuator(Node):
     def __init__(self):
         super().__init__("carla_actuator")
@@ -88,6 +113,7 @@ class CarlaActuator(Node):
         self._world = None
         self._vehicle = None
         self._max_steer = None
+        self._steer_curve = []
         self._stop = False
         self._lock = threading.Lock()
 
@@ -249,6 +275,16 @@ class CarlaActuator(Node):
                         else 1.0
                     )
                     self._max_steer = max_steer if max_steer > 1e-6 else 1.0
+                    self._steer_curve = (
+                        sorted((float(p.x), float(p.y)) for p in physics.steering_curve)
+                        if STEER_CURVE_COMP
+                        else []
+                    )
+                    self.get_logger().info(
+                        "steering: max_steer=%.4f rad, curve compensation %s %s"
+                        % (self._max_steer, "on" if STEER_CURVE_COMP else "off",
+                           self._steer_curve)
+                    )
 
                 snapshot = self._world.get_snapshot()
                 frame = int(snapshot.frame)
@@ -270,8 +306,10 @@ class CarlaActuator(Node):
                     continue
 
                 ctrl = carla.VehicleControl()
+                steer_gain = steering_curve_factor(self._steer_curve, actual_v)
                 ctrl.steer = max(
-                    -1.0, min(1.0, -payload["tire"] / (self._max_steer or 1.0))
+                    -1.0,
+                    min(1.0, -payload["tire"] / ((self._max_steer or 1.0) * steer_gain)),
                 )
                 ctrl.throttle, ctrl.brake = carla_longitudinal(
                     payload["velocity"], payload["acceleration"], actual_v

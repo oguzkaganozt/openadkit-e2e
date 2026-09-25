@@ -113,6 +113,9 @@ services:
       - config.env
     environment:
       - ROS_DOMAIN_ID=2
+      # Realise the approved tire angle through CARLA's speed-dependent
+      # steering curve (finding 013); 0 = legacy steer = tire / max_steer.
+      - ACTUATOR_STEER_CURVE_COMP=${ACTUATOR_STEER_CURVE_COMP:-1}
     volumes:
       - ./nodes:/opt/nodes:ro
       - ./config/cyclonedds.xml:/autoware/cyclonedds.xml:ro
