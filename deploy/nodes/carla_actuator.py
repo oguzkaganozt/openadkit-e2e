@@ -96,7 +96,7 @@ class CarlaActuator(Node):
         self._actual_v = 0.0
         self._applied = 0
 
-        self._last_msg_wall = None
+        self._last_msg_mono = None
         self._session = None
         self._expected_seq = None
         # Stop-gate instrumentation: armed by an SI_STOP decision, discharged
@@ -124,7 +124,7 @@ class CarlaActuator(Node):
         )
 
     def _on_approved(self, msg: ApprovedRequest) -> None:
-        self._last_msg_wall = time.time()
+        self._last_msg_mono = time.monotonic()
         raw_decision = int(msg.decision)
         decision = raw_decision if raw_decision in (0, 1, 2) else DECISION_HOLD
         session = int(msg.session)
@@ -180,9 +180,9 @@ class CarlaActuator(Node):
             )
 
     def _silence_check(self) -> None:
-        if self._last_msg_wall is None:
+        if self._last_msg_mono is None:
             return
-        age = time.monotonic() - self._last_msg_wall
+        age = time.monotonic() - self._last_msg_mono
         if age > SILENCE_LOG_SEC:
             # Visibility only: no timeout brake, SI owns stops.
             self.get_logger().warn(
