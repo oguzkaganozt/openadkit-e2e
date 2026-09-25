@@ -18,14 +18,18 @@ import json
 import sys
 import time
 
-import rclpy
-from rclpy.node import Node
-from rclpy.qos import (
-    DurabilityPolicy,
-    HistoryPolicy,
-    QoSProfile,
-    ReliabilityPolicy,
-)
+try:  # join mode must run without a ROS environment
+    import rclpy
+    from rclpy.node import Node
+    from rclpy.qos import (
+        DurabilityPolicy,
+        HistoryPolicy,
+        QoSProfile,
+        ReliabilityPolicy,
+    )
+except ModuleNotFoundError:  # pragma: no cover - join-only environments
+    rclpy = None
+    Node = object
 
 TOLERANCE = 1e-3
 
