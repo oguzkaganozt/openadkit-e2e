@@ -323,6 +323,50 @@ Our 4 m/s result reproduces a **similar stable operating point**, not their
 full CARLA 0.10/X5H/CR52 stack or one-lap gate. Do not treat the 4 m/s limit
 as a high-speed VP lateral-controller fix.
 
+## 009 — Rig H/C homography pair mismatch: fixed, and ruled out as the high-speed departure cause
+
+VisionPilot loads `H.yaml` at startup and `homography_C_matrix.yaml` in the
+preprocessing module, both from the image config directory. The image
+generates C at build time from the in-tree `VisionPilot/config/H.yaml` — the
+OpenLane 1920x1080 example whose own header says "MODIFY THIS MATRIX FOR
+DIFFERENT INPUT CAMERA" — while `deploy/docker-compose.yaml` bind-mounts the
+rig-calibrated `deploy/config/H.yaml` at run time. So AutoDrive's BEV input
+(`warped` in `inference.cpp`) was produced with a calibration that did not
+match the H used for `H_resized` and the lane path; AutoDrive curvature feeds
+the lateral fusion (`ad_curv = drive.curvature_raw * ad_curvature_scale` in
+`lateral_fusion.cpp`). Upstream PR #422 ships a C that matches its
+`H_carla.yaml` (recomputed C differs by < 0.007), i.e. a matched pair is the
+intended deployment shape.
+
+Fix (commit `8077d53`): `deploy/tools/gen-homography-c.sh` regenerates C from
+the rig H with the upstream script; `deploy/config/homography_C_matrix.yaml`
+is that generated pair; compose mounts it next to H.
+
+A/B (both fresh empty-rig worlds, spawn 184, VP_CONTROL, `vision_pilot.diag9.conf`,
+9 m/s limit, read-only 20 Hz trace):
+- old C: guardrail contact at sim t=40.7 s, ~141 m from spawn.
+- new C: lane offset +0.46 → +0.76 → +1.41 → +2.47 m over sim t=34–37 s;
+  guardrail contact at sim t=37.4 s, ~122 m from spawn.
+
+Pre-crash AutoDrive raw curvature was small in both (10 s-bucket means +0.013
+old / +0.020 new); the large post-crash differences (old +0.2..+0.34, new
+−0.1) are the model reacting to the off-lane scene. The mismatch was real and
+is fixed for correctness, but it is **not** the dominant high-speed
+lane-keeping cause.
+
+What the new trace shows instead: the raw camera CTE tracks the drift up
+(+0.48 → +1.55 m as the car goes left), then flips to −1.54 m within 0.23 s
+at sim t≈36.6 while CARLA ground truth still reports the car +1.4 → +2.5 m
+left; the particle-filtered CTE follows slowly (−0.3..−0.6 m/s) and the
+commanded tire angle stays below 0.05 rad. The departure begins ~2.5 s
+earlier (sim t≈35) with the road curve already established (camera κ ≈ 0.005)
+and no AD contribution. The leading candidate remains VP's lane
+measurement/fusion under lateral load (hypothesis switch or sign flip near
+the lane edge), not the AutoDrive warp, the actuator or the SI.
+
+Evidence: `/tmp/opencode/vpcontrol-cfix9-{vp,scenario,si}.log`,
+`/tmp/opencode/steer-trace-cfix9.csv` (local temporary evidence).
+
 ## Template for new entries
 
 ## NNN — Title [single-run]

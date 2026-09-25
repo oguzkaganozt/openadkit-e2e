@@ -26,6 +26,9 @@ branch `rig/vp-e2e-demo` (`491743a9`): the VP→SI interface, the MJPEG HUD
 viewer, the publish-boundary steering-sign fix and the speed-HUD exposure fix.
 The `vp-si` run additionally used `vision_pilot.demo-quiet.conf` (no per-frame
 fusion logs); this is a logging-only difference, driving code is identical.
+The clips were recorded before the H/C homography-pair fix (commit `8077d53`);
+the controlled 9 m/s A/B in findings 009 showed that fix does not change the
+pre-crash driving behavior, but the clips are labeled with that provenance.
 
 To reproduce a raw run on the GPU host, use
 `deploy/tools/record-example.sh <vp-control|vp-si|autoware-si> [drive_seconds]`.

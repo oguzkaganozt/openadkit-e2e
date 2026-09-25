@@ -24,11 +24,22 @@ def main():
 
     client = carla.Client(args.host, args.port)
     client.set_timeout(3.0)
-    world = client.get_world()
+    # The probe is often started while run-loop.sh is restarting the CARLA
+    # server; retry until it answers instead of aborting on a refused RPC.
+    world = None
+    for _ in range(240):
+        try:
+            world = client.get_world()
+            break
+        except RuntimeError:
+            time.sleep(0.5)
+    if world is None:
+        parser.error("CARLA server not reachable")
     # CARLA can return an empty actor registry immediately after a new client
-    # connects; allow its replication to receive a world frame before failing.
+    # connects, and the probe is often started while run-loop.sh is still
+    # bringing up a fresh world: wait up to 5 minutes for the scenario's hero.
     vehicle = None
-    for _ in range(30):
+    for _ in range(600):
         actors = world.get_actors()
         vehicle = next(
             (actor for actor in actors.filter("vehicle.*")
@@ -37,7 +48,7 @@ def main():
         )
         if vehicle is not None:
             break
-        time.sleep(0.1)
+        time.sleep(0.5)
     if vehicle is None:
         parser.error("no hero vehicle in world")
     maximum = math.radians(vehicle.get_physics_control().wheels[0].max_steer_angle)
