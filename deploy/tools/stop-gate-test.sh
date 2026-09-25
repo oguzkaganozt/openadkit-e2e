@@ -23,6 +23,7 @@ SI_CONTAINER="${SI_CONTAINER:-openadkit-e2e-si}"
 ACTUATOR_CONTAINER="${ACTUATOR_CONTAINER:-openadkit-e2e-carla-actuator}"
 SOURCE_CONTAINER="${SOURCE_CONTAINER:-openadkit-e2e-adapter}"
 WAIT_SEC="${WAIT_SEC:-20}"
+PREFLIGHT_SEC="${PREFLIGHT_SEC:-10}"
 
 log_section() {
   echo
@@ -31,11 +32,11 @@ log_section() {
 
 # Preflight: the rig must be healthy and driving; a pre-existing latch would
 # make the injection measure nothing new.
-if docker logs --since 10s "$SI_CONTAINER" 2>&1 | grep -qa "SI_STOP latched"; then
-  echo "FAIL: SI latched within the last 10 s; fix the rig before measuring" >&2
+if docker logs --since "${PREFLIGHT_SEC}s" "$SI_CONTAINER" 2>&1 | grep -qa "SI_STOP latched"; then
+  echo "FAIL: SI latched within the last ${PREFLIGHT_SEC}s; fix the rig before measuring" >&2
   exit 1
 fi
-if ! docker logs --since 10s "$ACTUATOR_CONTAINER" 2>&1 | grep -qa "decision=0"; then
+if ! docker logs --since "${PREFLIGHT_SEC}s" "$ACTUATOR_CONTAINER" 2>&1 | grep -qa "decision=0"; then
   echo "FAIL: no recent NORMAL applied control; is the car driving?" >&2
   exit 1
 fi

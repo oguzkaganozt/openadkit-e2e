@@ -104,6 +104,7 @@ class CarlaActuator(Node):
         self._stop_waiting = False
         self._stop_recv_wall_ns = None
         self._stop_decision = None
+        self._stop_armed_fault = None
 
         qos = QoSProfile(
             depth=10,
@@ -166,18 +167,25 @@ class CarlaActuator(Node):
         with self._lock:
             self._payload = payload
 
-        if decision == DECISION_STOP and not self._stop_waiting:
-            self._stop_waiting = True
-            self._stop_recv_wall_ns = time.time_ns()
-            self._stop_decision = (
-                "session=%d seq=%d mode=%d source=%d fault=%d"
-                % (session, seq, payload["mode"], payload["selected_source"],
-                   payload["fault_id"])
-            )
-            self.get_logger().warn(
-                "GATE STOP_RECV %s wall_ns=%d"
-                % (self._stop_decision, self._stop_recv_wall_ns)
-            )
+        if decision == DECISION_STOP:
+            fault_key = (session, payload["fault_id"])
+            if fault_key != self._stop_armed_fault:
+                # One STOP_RECV/STOP_APPLIED pair per fault episode: SI keeps
+                # publishing SI_STOP at its cycle rate while latched.
+                self._stop_armed_fault = fault_key
+                self._stop_waiting = True
+                self._stop_recv_wall_ns = time.time_ns()
+                self._stop_decision = (
+                    "session=%d seq=%d mode=%d source=%d fault=%d"
+                    % (session, seq, payload["mode"], payload["selected_source"],
+                       payload["fault_id"])
+                )
+                self.get_logger().warn(
+                    "GATE STOP_RECV %s wall_ns=%d"
+                    % (self._stop_decision, self._stop_recv_wall_ns)
+                )
+        else:
+            self._stop_armed_fault = None
 
     def _silence_check(self) -> None:
         if self._last_msg_mono is None:
