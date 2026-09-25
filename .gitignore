@@ -4,3 +4,5 @@ __pycache__/
 .pytest_cache/
 # Pinned large map artifacts (fetched by deploy/tools/fetch-town04-map.sh)
 deploy/maps/
+# Local, non-public handover notes (rig host access, ephemeral evidence paths)
+HANDOVER.local.md
