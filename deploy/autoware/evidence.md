@@ -14,7 +14,7 @@ RIG_MODE=autoware SI_MODE=si PREVIEW_AUTO=0 ./deploy/run-loop.sh --gpu
 | CARLA server | `carlasim/carla:0.9.16@sha256:aaf1df22702780ece072069e23d03c4879b002ae028c79744b09c4c7ddbae953` |
 | CARLA Python API wheel | `carla-0.9.16-cp310-cp310-manylinux_2_31_x86_64.whl`; SHA-256 `52b1f2fafb0655e25954f9f6d1e97c211a4da404217fd1d0094b4b7350737c95` (`deploy/build.sh`) |
 | Autoware image | `ghcr.io/autowarefoundation/autoware:universe-20250207@sha256:5482c148addbd13c005e86452fc9c40502a8c87759f679b8b61d83943059ada7` |
-| SI_CONTROL binary | SHA-256 `3ca8374c6b5eee2b4448913a77a4db5439f04264c0127bb61861d2243b1641b0`; staged from `build/freertos-posix-si` |
+| SI_CONTROL binary | SHA-256 `3ca8374c6b5eee2b4448913a77a4db5439f04264c0127bb61861d2243b1641b0`; built from `build/freertos-posix-si` (two-binary compile-time mode, since superseded by the single binary with startup configuration) |
 | World and ego | CARLA Town04, spawn index 184, road 45 / lane -4; `vehicle.lincoln.mkz_2020` role `hero` |
 | CARLA clock | Synchronous ticks, `fixed_delta_seconds=0.05` in `deploy/nodes/scenario.py`; ROS `/clock` from `carla_bridge.py` |
 | Scenario | `deploy/config/carla-rig-empty.json` (no NPCs, no lead vehicle) |

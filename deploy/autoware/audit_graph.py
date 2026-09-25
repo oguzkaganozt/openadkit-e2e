@@ -16,6 +16,7 @@ from rclpy.node import Node
 
 TOPICS = (
     "/planning/scenario_planning/trajectory",
+    "/planning/visionpilot/trajectory_candidate",
     "/vehicle/driving_reference",
     "/perception/object_recognition/objects",
     "/control/trajectory_follower/control_cmd",
@@ -46,11 +47,13 @@ def main() -> None:
         candidate = publishers[TOPICS[0]]
         if len(candidate) != 1 or not candidate[0].startswith("/planning/"):
             raise RuntimeError(f"expected one Autoware trajectory writer, got {candidate}")
+        if publishers["/planning/visionpilot/trajectory_candidate"]:
+            raise RuntimeError("VisionPilot trajectory candidate is still being published")
         if publishers["/vehicle/driving_reference"]:
             raise RuntimeError("VisionPilot reference is still being published")
         if publishers["/perception/object_recognition/objects"] != ["/empty_scene_fixture"]:
             raise RuntimeError("empty-world fixture absent or multiple perception writers")
-        for topic in TOPICS[3:]:
+        for topic in TOPICS[4:]:
             if publishers[topic]:
                 raise RuntimeError(f"unexpected control writer on {topic}: {publishers[topic]}")
         print("Autoware candidate isolation: PASS (no domain-1 control writers)", flush=True)

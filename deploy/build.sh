@@ -166,11 +166,11 @@ docker run --rm \
   "$SI_BUILD_IMAGE" \
   -lc './build.sh \
     --platform freertos-posix \
-    -d build/freertos-posix-si \
+    -d build/freertos-posix \
     --dds-interface "$1" \
     --control-output DDS_ONLY' \
   bootstrap-si "$DDS_INTERFACE"
-test -x "$SI/build/freertos-posix-si/actuation_freertos"
+test -x "$SI/build/freertos-posix/actuation_freertos"
 
 echo "Pulling runtime images..."
 "${COMPOSE[@]}" pull carla

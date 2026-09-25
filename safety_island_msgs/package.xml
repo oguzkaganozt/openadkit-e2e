@@ -4,13 +4,10 @@
   <name>safety_island_msgs</name>
   <version>0.1.0</version>
   <description>
-    Messages authored by the Autoware Safety Island actuation module.
-    ApprovedRequest is the single supervised actuator-facing output of the
-    Safety Island (see the vp_si_control_contract design doc and Safety
-    Island issues #62/#63/#64/#65): its source of truth today is the SI-side
-    IDL (actuation_module/src/autoware/autoware_msgs/msg/ApprovedRequest.idl);
-    this ROS-side package mirrors it so Humble readers and the future CARLA
-    actuator can consume the topic.
+    Safety Island boundary messages. ApprovedRequest is the supervised
+    actuator-facing output; TrajectoryCandidate carries a VisionPilot-derived
+    standard trajectory and its original session/cycle into SI_CONTROL.
+    Keep these ROS definitions wire-identical to the SI-side IDLs.
   </description>
   <maintainer email="oguzkaganozt@example.com">Oguz Ozturk</maintainer>
   <license>Apache-2.0</license>
@@ -20,6 +17,7 @@
 
   <depend>builtin_interfaces</depend>
   <depend>autoware_control_msgs</depend>
+  <depend>autoware_planning_msgs</depend>
   <exec_depend>rosidl_default_runtime</exec_depend>
 
   <member_of_group>rosidl_interface_packages</member_of_group>

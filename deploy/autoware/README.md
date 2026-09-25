@@ -36,13 +36,12 @@ and only then starts SI. A route or trajectory failure **fails the attempt**;
 there is no synthetic candidate or automatic fallback to VP.
 
 Use a lead-free world (`carla-rig-empty.json`, the default for this mode)
-because no perception is running. `run-loop.sh` requires the distinct
-`build/freertos-posix-si/actuation_freertos` SI binary and stages it separately
-from `build/freertos-posix-vp/actuation_freertos`; neither mode overwrites the
-other's build output.
+because no perception is running. The single SI binary is built once at
+`build/freertos-posix/actuation_freertos` and reads its mode (`SI_MODE=si`)
+and selected source (`RIG_MODE=autoware`) from the compose environment at
+startup; there is no mode-specific build or staged copy.
 
-**Current limit:** CARLA control still goes through the legacy bridge's
-`control_cmd` subscriber. The separate ApprovedRequest-only actuator (E2E #2)
-is required before this run demonstrates final single-writer authority or
-the ≤500 ms applied-stop gate. Treat the present run as a planning/SI source
-smoke test, not that timing proof.
+**Current limit:** this smoke run predates the single-writer
+ApprovedRequest-only actuator and the ≤500 ms applied-stop gates; those are
+validated separately in `docs/e2e2-stop-gate.md` (all three configurations,
+each on a fresh world).

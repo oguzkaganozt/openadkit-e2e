@@ -1,13 +1,16 @@
 # VP–SI integration plan
 
-**Status:** Proposed. Not implemented yet.
-
-**Update 2026-09-25:** the VP side of this plan is now implemented — the fork
-branch `feat/vp-si-interface` publishes `DrivingCommand` / `DrivingReference`
-(`visionpilot_msgs`) with camera source stamps, and the adapter consumes the
-reference with exact same-frame ego matching (no adapter-authored stops). The
-agreed v0.1 interface details are in the Safety Island #62 control contract;
-the "Today" section below is kept as the pre-implementation baseline.
+**Status: historical proposal, not a current implementation guide.** The
+"Today" and "Target" sections below describe the pre-supervisor baseline;
+in particular there is now no separate GUARD writer or bridge timeout brake.
+The implementation and remaining contract decisions are in the Safety Island
+`vp_si_control_contract.rst` (#62). In the current rig the SI is the only
+decision authority and a separate ApprovedRequest actuator is the only CARLA
+writer. SI_CONTROL selects either native Autoware Trajectory or a VP-specific
+TrajectoryCandidate with original VP session/cycle; VP_CONTROL selects the
+compound DrivingCommand. A single binary reads the immutable selection at
+startup. The older design narrative below is retained only as historical
+context, not as deployment instructions.
 
 ## Idea in one line
 

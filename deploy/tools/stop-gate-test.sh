@@ -102,6 +102,13 @@ fi
 # includes the source container's own shutdown time (for multi-node Autoware
 # the docker stop grace period can dominate it).
 fault_line="$(find_first "$SI_CONTAINER" "SI fault:" || true)"
+if [[ -z "$fault_line" ]]; then
+  # The edge-only SI fault detail may flush after its latch line; the rig is
+  # fresh and preflight rejected any earlier SI_STOP, so the last one belongs
+  # to this injection.
+  fault_line="$(docker logs --tail 100 "$SI_CONTAINER" 2>&1 \
+    | grep -a 'SI fault:' | tail -1 || true)"
+fi
 si_watchdog_ms=""
 if [[ -n "$fault_line" ]]; then
   age="$(grep -oE 'arrived [0-9.]+ s ago' <<<"$fault_line" | grep -oE '[0-9.]+' | head -1)"
@@ -114,6 +121,12 @@ applied_ns="$(grep -oE 'wall_ns=[0-9]+' <<<"$applied_line" | head -1 | cut -d= -
   echo "FAIL: actuator gate lines lack wall_ns values" >&2
   exit 1
 }
+recv_id="$(grep -oE 'session=[0-9]+ seq=[0-9]+ mode=[0-9]+ source=[0-9]+ fault=[0-9]+' <<<"$recv_line")"
+applied_id="$(grep -oE 'session=[0-9]+ seq=[0-9]+ mode=[0-9]+ source=[0-9]+ fault=[0-9]+' <<<"$applied_line")"
+if [[ -z "$recv_id" || "$recv_id" != "$applied_id" ]] || ((applied_ns < recv_ns)); then
+  echo "FAIL: first applied stop does not match the received SI fault/sequence" >&2
+  exit 1
+fi
 
 detection_ms=$((latch_ms - inject_ms))
 transport_ms=$((recv_ns / 1000000 - latch_ms))
@@ -131,7 +144,7 @@ printf 'applied_gate_ms: %d\n' "$applied_gate_ms"
 if [[ -n "$si_watchdog_ms" ]]; then
   printf 'si_source_watchdog_ms: %s\n' "$si_watchdog_ms"
 fi
-if ((applied_gate_ms <= 500)); then
+if ((applied_gate_ms >= 0 && applied_gate_ms <= 500)); then
   echo "GATE PASS (<= 500 ms from SI detection to CARLA-applied stop)"
 else
   echo "GATE FAIL (> 500 ms)" >&2

@@ -265,6 +265,10 @@ services:
     network_mode: host
     ipc: host
     init: true
+    environment:
+      # Startup-only selection. Missing values cause SI to fail closed.
+      - SI_SUPERVISION_MODE=${SI_MODE:-}
+      - SI_TRAJECTORY_SOURCE=${RIG_MODE:-}
     volumes:
       - ../upstream/autoware-safety-island/build/freertos-posix/actuation_freertos:/opt/si/actuation_freertos:ro
     entrypoint: ["/bin/bash", "-lc"]

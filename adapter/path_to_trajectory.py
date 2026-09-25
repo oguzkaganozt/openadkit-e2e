@@ -1,10 +1,10 @@
-"""VP DrivingReference -> Autoware Trajectory, sized for the Safety Island.
+"""VP DrivingReference -> SI TrajectoryCandidate, sized for the Safety Island.
 
 VisionPilot publishes one compound reference per camera cycle: the lane
 polynomial y = a x^2 + b x + c (base_link) plus the planned speed schedule
 v(t), carrying the camera source stamp of that cycle. The Safety Island
-follower wants autoware_planning_msgs/Trajectory in the same frame as
-odometry, small enough to cross DDS without fragmentation.
+follower wants an Autoware Trajectory in the same frame as odometry. The
+VP-specific envelope preserves the original session/cycle across the adapter.
 
 A reference is transcribed only when it is valid and an ego sample with
 the exact same source stamp exists (the bridge stamps both with the CARLA
@@ -47,7 +47,7 @@ DEFAULT_FRAME_ID = "map"
 
 DEFAULT_INPUT_REFERENCE_TOPIC = "/vehicle/driving_reference"
 DEFAULT_INPUT_ODOM_TOPIC = "/localization/kinematic_state"
-DEFAULT_OUTPUT_TOPIC = "/planning/scenario_planning/trajectory"
+DEFAULT_OUTPUT_TOPIC = "/planning/visionpilot/trajectory_candidate"
 # Exact-frame ego buffer depth (~10 s at 20 Hz). A reference whose stamp
 # fell off the buffer is rejected like any other unmatched frame.
 EGO_BUFFER_DEPTH = 400
@@ -148,9 +148,17 @@ def serialized_size_bytes(frame_id_length: int, point_count: int) -> int:
     return CDR_ENCAPSULATION_BYTES + offset
 
 
+def candidate_serialized_size_bytes(frame_id_length: int, point_count: int) -> int:
+    """CDR size of TrajectoryCandidate (trajectory + uint32 + uint64)."""
+    offset = serialized_size_bytes(frame_id_length, point_count) - CDR_ENCAPSULATION_BYTES
+    offset = _align_up(offset, 4) + 4  # source_session
+    offset = _align_up(offset, 8) + 8  # source_cycle
+    return CDR_ENCAPSULATION_BYTES + offset
+
+
 def max_points_within(frame_id_length: int, byte_budget: int) -> int:
     count = 0
-    while serialized_size_bytes(frame_id_length, count + 1) <= byte_budget:
+    while candidate_serialized_size_bytes(frame_id_length, count + 1) <= byte_budget:
         count += 1
     return count
 
@@ -426,7 +434,7 @@ def convert(
             target_point_count, max_points_within(len(frame_id), byte_budget)
         )
         indices = indices[:budget]
-    if serialized_size_bytes(len(frame_id), len(indices)) > byte_budget:
+    if candidate_serialized_size_bytes(len(frame_id), len(indices)) > byte_budget:
         return None
 
     if speed_horizon:
@@ -512,6 +520,7 @@ def main(args=None) -> None:
     from builtin_interfaces.msg import Duration, Time
     from geometry_msgs.msg import Pose
     from nav_msgs.msg import Odometry
+    from safety_island_msgs.msg import TrajectoryCandidate
     from visionpilot_msgs.msg import DrivingReference
     import time as time_mod
     from rclpy.executors import ExternalShutdownException
@@ -548,7 +557,7 @@ def main(args=None) -> None:
         reliability=QoSReliabilityPolicy.RELIABLE,
         durability=QoSDurabilityPolicy.VOLATILE,
     )
-    publisher = node.create_publisher(Trajectory, output_topic, qos)
+    publisher = node.create_publisher(TrajectoryCandidate, output_topic, qos)
     # Ego samples keyed by the CARLA sim-time stamp on their header: a
     # reference is transcribed only when its source stamp finds the
     # identical key, i.e. the path and the pose are from one world frame.
@@ -561,7 +570,9 @@ def main(args=None) -> None:
     rejects: dict[str, int] = {}
     last_reject_log_at = [0.0]
 
-    def publish_points(points: list[TrajectoryPoint], stamp) -> None:
+    def publish_points(
+        points: list[TrajectoryPoint], stamp, source_session: int, source_cycle: int
+    ) -> None:
         out = Trajectory()
         out.header.stamp = stamp
         out.header.frame_id = out_frame
@@ -581,7 +592,11 @@ def main(args=None) -> None:
             nsec = int(round((p.time_from_start_sec - sec) * 1e9))
             tp.time_from_start = Duration(sec=sec, nanosec=nsec)
             out.points.append(tp)
-        publisher.publish(out)
+        candidate = TrajectoryCandidate()
+        candidate.trajectory = out
+        candidate.source_session = source_session
+        candidate.source_cycle = source_cycle
+        publisher.publish(candidate)
 
     def reject(reason: str) -> None:
         # Rejection is silence: the adapter does not author a stop, so a
@@ -666,6 +681,8 @@ def main(args=None) -> None:
                 sec=int(msg.source_stamp.sec),
                 nanosec=int(msg.source_stamp.nanosec),
             ),
+            msg.session,
+            msg.cycle,
         )
         last_session[0] = msg.session
         last_cycle[0] = msg.cycle
@@ -675,7 +692,7 @@ def main(args=None) -> None:
         for i in range(1, len(horizon)):
             s_h += 0.5 * (horizon[i - 1] + horizon[i]) * msg.horizon_dt_s
         stop0 = next((i for i, v in enumerate(horizon) if v <= 1e-6), -1)
-        size = serialized_size_bytes(len(out_frame), len(points))
+        size = candidate_serialized_size_bytes(len(out_frame), len(points))
         node.get_logger().info(
             f"xfer #{published_count[0]} sess={msg.session} cyc={msg.cycle} "
             f"src={msg.source_stamp.sec}.{msg.source_stamp.nanosec:09d} "

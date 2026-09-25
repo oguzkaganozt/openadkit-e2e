@@ -60,6 +60,9 @@ class SiProbe(Node):
         self.decisions = {0: 0, 1: 0, 2: 0}
         self.modes = {}
         self.selected_sources = {}
+        self.source_sessions = {}
+        self.source_cycle_min = None
+        self.source_cycle_max = None
         self.stop_payloads = 0
         self.sessions = {}
         self.last_seq = None
@@ -89,6 +92,18 @@ class SiProbe(Node):
         source = int(msg.selected_source)
         self.modes[mode] = self.modes.get(mode, 0) + 1
         self.selected_sources[source] = self.selected_sources.get(source, 0) + 1
+        if decision == 0:
+            source_session = int(msg.source_session)
+            source_cycle = int(msg.source_cycle)
+            self.source_sessions[source_session] = self.source_sessions.get(source_session, 0) + 1
+            self.source_cycle_min = (
+                source_cycle if self.source_cycle_min is None
+                else min(self.source_cycle_min, source_cycle)
+            )
+            self.source_cycle_max = (
+                source_cycle if self.source_cycle_max is None
+                else max(self.source_cycle_max, source_cycle)
+            )
         if decision == 1:
             control = msg.control
             if (
@@ -151,6 +166,8 @@ class SiProbe(Node):
             },
             "modes": self.modes,
             "selected_sources": self.selected_sources,
+            "normal_source_sessions": self.source_sessions,
+            "normal_source_cycle_min_max": [self.source_cycle_min, self.source_cycle_max],
             "stop_payloads": self.stop_payloads,
             "sessions": sessions_out,
             "faults_per_session": {

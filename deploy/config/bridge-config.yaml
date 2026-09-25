@@ -12,6 +12,10 @@ topics:
     type: autoware_planning_msgs/msg/Trajectory
     from_domain: 1
     to_domain: 2
+  planning/visionpilot/trajectory_candidate:
+    type: safety_island_msgs/msg/TrajectoryCandidate
+    from_domain: 1
+    to_domain: 2
   system/operation_mode/state:
     type: autoware_adapi_v1_msgs/msg/OperationModeState
     from_domain: 1

@@ -15,6 +15,7 @@ Usage (run each side in a container with the matching domain):
 """
 
 import json
+import os
 import sys
 import time
 
@@ -140,7 +141,8 @@ def join(vp_path, si_path):
         "si_only": len(set(si) - set(vp)),
     }
     print(json.dumps(summary, indent=2))
-    if not common or mismatches:
+    minimum = int(os.environ.get("MIN_MATCHED_CYCLES", "1"))
+    if len(common) < minimum or mismatches:
         raise SystemExit(1)
     print("VERBATIM PASS: SI passed VP's command unchanged")
 

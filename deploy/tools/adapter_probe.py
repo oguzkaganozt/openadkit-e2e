@@ -2,7 +2,7 @@
 """Validate the E2E adapter trajectory against the VP reference behind it.
 
 Subscribes on ROS domain 1 to /vehicle/driving_reference (visionpilot_msgs)
-and to the adapter's Autoware Trajectory, then reports periodically and at
+and to the adapter's TrajectoryCandidate, then reports periodically and at
 exit:
 
 - trajectory count and inter-arrival gaps (a silent window during a fault
@@ -21,7 +21,7 @@ import os
 import time
 
 import rclpy
-from autoware_planning_msgs.msg import Trajectory
+from safety_island_msgs.msg import TrajectoryCandidate
 from rclpy.node import Node
 from rclpy.qos import (
     DurabilityPolicy,
@@ -68,8 +68,8 @@ class AdapterProbe(Node):
             DrivingReference, "/vehicle/driving_reference", self.on_ref, qos
         )
         self.create_subscription(
-            Trajectory,
-            "/planning/scenario_planning/trajectory",
+            TrajectoryCandidate,
+            "/planning/visionpilot/trajectory_candidate",
             self.on_traj,
             qos,
         )
@@ -86,16 +86,19 @@ class AdapterProbe(Node):
         while len(self.ref_order) > 4000:
             self.ref_stamps.pop(self.ref_order.pop(0), None)
 
-    def on_traj(self, msg: Trajectory) -> None:
+    def on_traj(self, msg: TrajectoryCandidate) -> None:
         now = time.monotonic()
         self.traj_count += 1
         if self.last_traj_at is not None:
             self.max_gap_s = max(self.max_gap_s, now - self.last_traj_at)
         self.last_traj_at = now
         self.window.append(now)
-        if stamp_key(msg.header.stamp) in self.ref_stamps:
+        traj = msg.trajectory
+        if self.ref_stamps.get(stamp_key(traj.header.stamp)) == (
+            int(msg.source_session), int(msg.source_cycle)
+        ):
             self.traj_matched += 1
-        points = msg.points
+        points = traj.points
         n = len(points)
         self.pts_min = n if self.pts_min is None else min(self.pts_min, n)
         self.pts_max = n if self.pts_max is None else max(self.pts_max, n)

@@ -4,33 +4,41 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT/deploy"
-# Candidate selection: the two configurations use the same Town04 CARLA rig
-# and SI follower, but exactly one planning source runs per attempt.
+# RIG_MODE is the SI-selected source in SI_CONTROL. With BOTH_SOURCES=1 the
+# unselected planner is also launched for an explicit ingress-isolation test.
 RIG_MODE="${RIG_MODE:-vp}"
+BOTH_SOURCES="${BOTH_SOURCES:-0}"
 case "$RIG_MODE" in
   vp) RIG_JSON="${RIG_JSON:-carla-rig.json}" ;;
   autoware) RIG_JSON="${RIG_JSON:-carla-rig-empty.json}" ;;
   *) echo "Invalid RIG_MODE '$RIG_MODE' (expected vp or autoware)" >&2; exit 2 ;;
 esac
 export RIG_JSON
-# Supervision mode selects which built binary is staged at the path compose
-# mounts: si (follower drives the selected trajectory source) or vp
-# (VisionPilot command checked and passed through, never recomputed). Build
-# the two binaries with:
-#   ./build.sh --platform freertos-posix -d build/freertos-posix-si ...            (si)
-#   ./build.sh --platform freertos-posix -d build/freertos-posix-vp ... --supervision-mode vp
+# One SI binary reads the mode and selected trajectory source once at startup.
+# It is never changed in a running process, and no fallback is permitted.
 SI_MODE="${SI_MODE:-si}"
 SI_BIN="$ROOT/upstream/autoware-safety-island/build/freertos-posix/actuation_freertos"
 case "$SI_MODE" in
-  si) SI_BIN_SRC="$ROOT/upstream/autoware-safety-island/build/freertos-posix-si/actuation_freertos" ;;
-  vp) SI_BIN_SRC="$ROOT/upstream/autoware-safety-island/build/freertos-posix-vp/actuation_freertos" ;;
+  si|vp) ;;
   *) echo "Invalid SI_MODE '$SI_MODE' (expected si or vp)" >&2; exit 2 ;;
 esac
 if [[ "$RIG_MODE" == "autoware" && "$SI_MODE" != "si" ]]; then
   echo "Autoware trajectory requires SI_MODE=si (SI_CONTROL)" >&2
   exit 2
 fi
+if [[ "$BOTH_SOURCES" != 0 && "$BOTH_SOURCES" != 1 ]]; then
+  echo "BOTH_SOURCES must be 0 or 1" >&2
+  exit 2
+fi
+if [[ "$BOTH_SOURCES" == 1 && ( "$SI_MODE" != si || "$RIG_JSON" != carla-rig-empty.json ) ]]; then
+  echo "Concurrent-source test requires SI_MODE=si and the empty CARLA rig" >&2
+  exit 2
+fi
+export RIG_MODE SI_MODE
 COMPOSE=(docker compose --env-file config.env --profile "$RIG_MODE")
+if [[ "$BOTH_SOURCES" == 1 ]]; then
+  COMPOSE+=(--profile vp --profile autoware)
+fi
 
 COMPUTE="${COMPUTE:-auto}"
 while (($#)); do
@@ -44,7 +52,7 @@ while (($#)); do
       shift
       ;;
     -h|--help)
-      echo "Usage: RIG_MODE=vp|autoware SI_MODE=si|vp ./deploy/run-loop.sh [--cpu|--gpu]"
+      echo "Usage: RIG_MODE=vp|autoware SI_MODE=si|vp [BOTH_SOURCES=1] ./deploy/run-loop.sh [--cpu|--gpu]"
       exit 0
       ;;
     *)
@@ -120,14 +128,14 @@ wait_for_carla() {
   return 1
 }
 
-if [[ ! -x "$SI_BIN_SRC" ]]; then
-  echo "SI binary missing for mode '$SI_MODE': $SI_BIN_SRC" >&2
-  echo "Build first: $ROOT/deploy/build.sh --dds-interface <nic> [--supervision-mode $SI_MODE]" >&2
+if [[ ! -x "$SI_BIN" ]]; then
+  echo "SI binary missing: $SI_BIN" >&2
+  echo "Build first: $ROOT/deploy/build.sh --dds-interface <nic>" >&2
   exit 1
 fi
-echo "SI supervision mode: $SI_MODE ($SI_BIN_SRC)"
-echo "Rig candidate: $RIG_MODE ($RIG_JSON)"
-if [[ "$RIG_MODE" == "autoware" ]]; then
+echo "SI supervision mode: $SI_MODE ($SI_BIN)"
+echo "Rig candidate: $RIG_MODE ($RIG_JSON); both publishers: $BOTH_SOURCES"
+if [[ "$RIG_MODE" == "autoware" || "$BOTH_SOURCES" == 1 ]]; then
   python3 - "$ROOT/deploy/config/$RIG_JSON" <<'PY'
 import json
 import sys
@@ -179,12 +187,6 @@ done < <(ps -eo pid=,args= | awk -v bin="$SI_BIN" -v scenario="$ROOT/deploy/node
     if (arg[1]==bin || (n>1 && arg[1] ~ /(^|\/)python[0-9.]*$/ && arg[2]==scenario)) print pid
   }')
 
-# Stage the selected supervision mode's binary at the fixed path the compose
-# si service mounts. Safe here: the down above removed the si container and
-# the pkill stopped any host process, so nothing holds the file.
-mkdir -p "$(dirname "$SI_BIN")"
-cp -f "$SI_BIN_SRC" "$SI_BIN"
-
 "${COMPOSE[@]}" up -d --force-recreate carla
 wait_for_carla
 # Shared DDS/mode infrastructure (no world handles; start once).
@@ -205,13 +207,7 @@ wait_for_log openadkit-e2e-carla-bridge "camera frame #" "bridge camera"
 "${COMPOSE[@]}" up -d --no-deps --force-recreate carla-actuator
 started_at="$(date --iso-8601=seconds)"
 wait_for_log openadkit-e2e-carla-actuator "sole CARLA control writer" "CARLA actuator"
-if [[ "$RIG_MODE" == "vp" ]]; then
-  "${COMPOSE[@]}" up -d --no-deps --force-recreate adapter visionpilot
-  started_at="$(date --iso-8601=seconds)"
-  wait_for_log openadkit-e2e-adapter "vehicle/driving_reference + /localization/kinematic_state" "adapter subscribed"
-  wait_for_log openadkit-e2e-adapter "xfer #" "VP reference + adapter Trajectory"
-  wait_for_log openadkit-e2e-visionpilot "plan: tyre=" "VP planning"
-else
+if [[ "$RIG_MODE" == "autoware" || "$BOTH_SOURCES" == 1 ]]; then
   started_at="$(date --iso-8601=seconds)"
   "${COMPOSE[@]}" up -d --no-deps --force-recreate autoware-planning odom-to-tf empty-scene
   wait_for_log openadkit-e2e-empty-scene "empty-scene fixture active" "empty scene"
@@ -222,8 +218,16 @@ else
     exit 1
   fi
 fi
-"${COMPOSE[@]}" up -d --no-deps --force-recreate si
+if [[ "$RIG_MODE" == "vp" || "$BOTH_SOURCES" == 1 ]]; then
+  "${COMPOSE[@]}" up -d --no-deps --force-recreate adapter visionpilot
+  started_at="$(date --iso-8601=seconds)"
+  wait_for_log openadkit-e2e-adapter "vehicle/driving_reference + /localization/kinematic_state" "adapter subscribed"
+  wait_for_log openadkit-e2e-adapter "xfer #" "VP reference + adapter TrajectoryCandidate"
+  wait_for_log openadkit-e2e-visionpilot "plan: tyre=" "VP planning"
+fi
 started_at="$(date --iso-8601=seconds)"
+"${COMPOSE[@]}" up -d --no-deps --force-recreate si
+wait_for_log openadkit-e2e-si "Supervision mode: $SI_MODE; trajectory source: $RIG_MODE" "SI selected ingress"
 wait_for_log openadkit-e2e-carla-actuator "applied control #" "SI control"
 # PREVIEW_HOST wins; otherwise auto-detect the public IP (link-local EC2-style
 # metadata, then a public echo service), else fall back to local addresses.

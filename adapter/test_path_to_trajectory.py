@@ -8,6 +8,7 @@ from path_to_trajectory import (
     SERIALIZED_BYTE_BUDGET,
     TARGET_POINT_COUNT,
     Pose2D,
+    candidate_serialized_size_bytes,
     convert,
     cycle_reason,
     horizon_arc_lengths,
@@ -87,8 +88,9 @@ class ConvertTests(unittest.TestCase):
         out = convert(path, Pose2D(0.0, 0.0, 0.0), target_velocity_mps=3.0)
         self.assertIsNotNone(out)
         assert out is not None
-        size = serialized_size_bytes(len(DEFAULT_FRAME_ID), len(out))
+        size = candidate_serialized_size_bytes(len(DEFAULT_FRAME_ID), len(out))
         self.assertLessEqual(size, SERIALIZED_BYTE_BUDGET)
+        self.assertGreater(size, serialized_size_bytes(len(DEFAULT_FRAME_ID), len(out)))
         self.assertLessEqual(len(out), TARGET_POINT_COUNT)
 
     def test_stopped_ego_still_gets_min_speed(self):
