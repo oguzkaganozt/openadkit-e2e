@@ -153,6 +153,18 @@ Evidence:
   38% / 4.6 of 16 GB, VP container ~110% CPU, no cgroup quota, and no VP
   error lines. The moving applied-stop gate test only succeeded because
   its preflight found one NORMAL window at 8 m/s.
+- 2026-09-25 10:04–10:13 UTC, dedicated split measurement on the same
+  host: an independent image-stream subscriber (domain 1, reliable QoS
+  matching the bridge) received **1678 images in 180 s with a single
+  0.50 s gap** — the camera/bridge/DDS feed is healthy. Over the same
+  seven minutes the adapter logged 181 stalls > 0.5 s (87 of them ≥ 1.0 s,
+  median 0.96 s, p90 3.80 s, max 16.86 s). During every stall window the
+  GPU peaked at 52% (baseline peak 54%) — idle, not saturated — while the
+  VP container kept burning 70–150% CPU and emitted its log lines in
+  backlog bursts after each silence. Conclusion: the stall is **inside the
+  VP process** (busy but not publishing), not camera, bridge, DDS
+  transport, GPU saturation or host throttling; per-stage stopwatch
+  instrumentation in the VP pipeline is the next step.
 
 Status + follow-up: confirmed (≥3 stalls observed). This is the top rig
 blocker: the vehicle cannot complete a long autonomous run while the
