@@ -182,6 +182,7 @@ done < <(ps -eo pid=,args= | awk -v bin="$SI_BIN" -v scenario="$ROOT/deploy/node
 # Stage the selected supervision mode's binary at the fixed path the compose
 # si service mounts. Safe here: the down above removed the si container and
 # the pkill stopped any host process, so nothing holds the file.
+mkdir -p "$(dirname "$SI_BIN")"
 cp -f "$SI_BIN_SRC" "$SI_BIN"
 
 "${COMPOSE[@]}" up -d --force-recreate carla
