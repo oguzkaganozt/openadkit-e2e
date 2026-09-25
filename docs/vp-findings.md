@@ -174,7 +174,10 @@ Evidence:
   attempts, not source-cut gate measurements. The 4 m/s limit improves
   lateral behavior; it does **not** remove the source-stall fault.
 
-Status + follow-up: confirmed (≥3 stalls observed). This is the top rig
+**Resolved by 012:** the stalls were camera-frame starvation on the
+CycloneDDS→FastDDS UDP path with 212 KB socket buffers, not VP-internal work.
+
+Status + follow-up (historical): confirmed (≥3 stalls observed). This is the top rig
 blocker: the vehicle cannot complete a long autonomous run while the
 planner stalls every few minutes. Next: instrument VP's per-stage timing
 (camera→planner→publish) with the existing stopwatch macros to find
@@ -392,10 +395,210 @@ wandering to ±2 m at 9 m/s is still not acceptable lane keeping, and the
 spawn-184 curve remains a deterministic counterexample at this speed.
 Separately, the −7.5 m/s² command is a VP longitudinal-control excursion; the
 SI's independent envelope check turned it into a safe stop, exactly the
-behavior the architecture requires in VP_CONTROL mode.
+behavior the architecture requires in VP_CONTROL mode. Its source is a phantom
+AutoDrive-only CIPO on the guardrail (011, fixed).
 
 Evidence: `/tmp/opencode/vpcontrol-spawn100-{vp,scenario,si}.log`,
 `/tmp/opencode/steer-trace-spawn100.csv` (local temporary evidence).
+
+## 011 — Phantom CIPO braking: AutoDrive-only detections of the guardrail on curves [confirmed, fixed]
+
+The −7.513 m/s² command of 010 was not a lead-vehicle decision. In the
+camera-only fusion path (`longitudinal_fusion.cpp`, radar off) a **single**
+AutoDrive frame with `flag_prob ≥ 0.40` and no AutoSpeed vehicle box confirmed
+a CIPO, and the IDM term in `compute_acceleration` has no lower bound, so a
+7 m "lead" at 9 m/s produced −7.5 m/s² (SI refused it, ±6.0 envelope).
+
+Evidence:
+- 010's spawn-100 run: `[Fusion] src=cam | AD=7.2 m (p=42%) | AS+H=(none) …
+  Fused=7.0 m` → `plan: … accel=-7.513 … cipo=true dist=7.0 m` → next frame
+  `No CIPO confirmed (AD=23%) — reset to 150 m`. Empty world (no NPCs).
+- 19 pre-collision CIPO episodes across five 2026-09-25 empty-world runs
+  (spawn100/diag9/diag4/1628/1613 logs in `/tmp/opencode/`): **all** AD-only
+  (no AS box), 1–8 frames, p up to 79 %, 5–70 m; the −4.09 / −3.92 m/s² of 010
+  were the same kind. A pure N-frame persistence filter would not remove them.
+- 1 Hz frames (`frame_sampler.py`) at the phantom moments of
+  `20260925T200938Z-baseline-s184-9ms` show an empty road curving away with the
+  guardrail crossing the car's heading ~15–20 m ahead — where AD reported the
+  CIPO (16 m). The code's own comment warns about a "static rail".
+
+Fix (fork `fix/vp-ad-only-cipo`, `c4e17bf0`, in pin `652b72e1`): an AD-only
+frame may continue a track that an in-path AutoSpeed vehicle started (close
+range, where the box is lost — finding 002), but cannot start one;
+`fusion.ad_only_needs_as_track=false` restores the old rule. No IDM clamp: the
+SI owns the envelope.
+
+A/B (VPS, fresh worlds, 64 MiB socket buffers, `diag9-latfast` conf, actuator
+steering-curve compensation on; `visionpilot:gpu-ros2-p3` = diag + fix vs
+`visionpilot:gpu-ros2-diag`):
+
+| Run | Image | Pre-collision CIPO episodes | Lead following |
+|---|---|---|---|
+| spawn 100 (`…214345Z-p1comp1-latfast-s100`) | diag | 7 (all AD-only) | — |
+| spawn 100 (`…215811Z-p3f-s100-p3`) | fix | **0** (19 AD-only frames ignored) | — |
+| slow lead 4.09 m/s (`…215117Z-p3f-slowlead-diag`) | diag | — | closes 45→11 m, holds 11.0–12.1 m at 4.0–4.3 m/s |
+| slow lead (`…214750Z-p3f-slowlead-p3`, `…215443Z-p3f-slowlead-p3`) | fix | — | same: holds 11.0–12.4 m, no contact |
+
+Both spawn-100 runs end at the same junction wall (013); the −4.7/−5.1 m/s²
+there are AS-boxed wall detections at 8.4 m, i.e. a real obstacle. An earlier
+slow-lead A/B on the old lateral filter was confounded by weaving (the lead left
+the in-path region; the fix changed no fusion decision in that run) and is
+superseded by the table above. Separately, 003's weak braking for a slower
+lead is not reproduced here: with the current pin the car matches the lead's
+speed at ~11.5 m.
+
+## 012 — VP "planning stalls" were camera-frame starvation from 212 KB UDP socket buffers [confirmed, fixed]
+
+The source stalls of 005 are not inside VisionPilot's pipeline. VP waits for a
+camera frame that has not arrived: the bridge publishes 1920×1280 BGR8 frames
+(7.37 MB) at 10 Hz on CycloneDDS, VP (Jazzy, FastDDS) receives them over UDP in
+reliable mode, and the rig host had the stock `net.core.rmem_max` /
+`rmem_default` of 212 992 B. Fragments overflow the socket, reliable repair
+takes hundreds of ms to seconds, and the SI latches on the 1.0 s freshness
+watchdog.
+
+Reproduction (VPS `77.104.167.149`, RTX 4060 Ti, 2026-09-25, fresh worlds,
+`RIG_MODE=vp SI_MODE=vp`, `carla-rig-empty.json`, spawn 184,
+`vision_pilot.demo.conf` 4 m/s, 600 s drive). Diagnostic image
+`visionpilot:gpu-ros2-diag` = pinned `491743a9` + fork branch
+`diag/vp-stage-timing`: a per-cycle `[Timing]` line (wait / preprocess / infer
+per model / plan / publish / viz / render) and a watchdog that reports a loop
+that has not changed stage for 500 ms, while it happens.
+
+Evidence (`/tmp/opencode/runs/<run>/`, analysed with the adapter `xfer` arrival
+times):
+
+| Run | Socket buffers | VP cycles | adapter gaps > 0.5 s | max gap | longest `wait` | max busy | SI latch |
+|---|---|---|---|---|---|---|---|
+| `20260925T204517Z-p2-base-demo4-600s` (pinned image) | 212 KB | — | 42 | 2.09 s | (no timing) | (no timing) | 1, at ~1 min (`vp command arrived 1.04 s ago`) |
+| `20260925T201846Z-p2-diag-demo4-600s` | 212 KB | 4522 (~7.5 Hz) | 19 | 1.01 s | 871 ms | 200 ms | 0 (one 1.01 s gap) |
+| `20260925T205648Z-p2-bufs-diag-demo4-600s` | rmem 64 MiB max / 16 MiB default | **6059 (~10 Hz)** | **0** | ≤ 0.21 s | **103 ms** | 158 ms | **0**, 2402 m |
+
+- Every adapter gap > 0.5 s in the 212 KB runs coincides with a VP `wait`
+  (no new frame) interval; VP's own work never exceeded 200 ms per cycle.
+- The same starvation latched both 9 m/s `diag9-latfast` runs of 013
+  (`wait` 1107 ms → `vp command arrived 1.03 s ago`; 1474 ms → 1.10 s).
+- With large buffers VP processed every camera frame (10 Hz instead of ~7.5 Hz).
+- 005's independent CycloneDDS subscriber saw a healthy stream: a
+  CycloneDDS→CycloneDDS reader is not the path VP uses; it did not rule out the
+  cross-vendor UDP receive.
+- Side finding: `VP_INFO` is `printf` to stdout, fully buffered under the
+  container log pipe, so VP log timestamps are buffer-flush times. 005's "`plan:`
+  gap" numbers are therefore unreliable; the diag image line-buffers stdout.
+
+Fix: `deploy/setup.sh` persists `net.core.{r,w}mem_max = 64 MiB` and
+`{r,w}mem_default = 16 MiB` (`/etc/sysctl.d/60-openadkit-e2e-dds.conf`);
+`deploy/run-loop.sh` refuses to start when `rmem_default` < 16 MiB
+(`DDS_BUFFER_CHECK=0` skips). Follow-up (not done): the camera frame is larger
+than VP needs (it resizes to the network input); a smaller bridge image or a
+same-vendor/shared-memory transport would cut the 74 MB/s DDS load.
+
+## 013 — 9 m/s lane loss was lateral-filter lag; a curvature-proportional offset remains [confirmed, partly fixed]
+
+The spawn-184 failure of 006/008–010 is a growing **weave**, not a straight
+run-off. 1 Hz frames of `20260925T200938Z-baseline-s184-9ms` show the car
+yawed toward the right guardrail with VP's path curving hard left ("Left Lane
+Departure"), one second after the opposite. The particle-filtered CTE lagged the
+raw camera CTE by ~7 cycles (~0.7 s, cross-correlation r=0.70 vs 0.42 at lag 0);
+the MPC acted on stale lateral error, the oscillation grew (CTE ±1.3 m, tire
+±0.15 rad, ~5 s period) until contact. The earlier "deterministic 120–140 m"
+is run-to-run variable: default-filter runs today hit the guardrail at 212,
+225, 274 and 284 m.
+
+Fix (fork `fix/vp-lat-fusion-config`, `3391b28e`, in pin `652b72e1`): the
+lateral noise terms are `fusion.lat.*` keys; the rig confs set
+`proc_noise_cte_rate_mps = 0.60`, `proc_noise_yaw_rate_rps = 0.20`,
+`meas_noise_cte_m = 0.08` (defaults 0.15 / 0.05 / 0.15). `diag4`/`diag9` keep
+the old filter as the historical A/B baseline; `diag9-latfast` is diag9 plus
+these keys.
+
+A/B (VPS, fresh worlds, spawn 184, VP_CONTROL, 9 m/s, 64 MiB socket buffers,
+`visionpilot:gpu-ros2-diag`; frames checked at 25/55/85/115 s — on the road,
+no lane change, no barrier):
+
+| Filter | Runs | Result |
+|---|---|---|
+| default (`diag9`) | `…203026Z`, `…204051Z` (212 KB buffers), `…211137Z` | guardrail at 212 / 284 / 225 m, no SI latch |
+| latfast | `…210811Z`, `…211506Z`, `…213329Z`, `…213657Z`, `…214017Z` | **1076–1088 m, no contact, no SI latch**; max \|lane_off\| in the first 300 m 0.79–0.82 m; filter lag 0 cycles |
+
+With 212 KB buffers two latfast runs were cut early by 012's starvation latch;
+both fixes are needed for a long 9 m/s run.
+
+What remains (measured on the latfast runs): the car is centred on straights
+(+0.03…+0.08 m) but holds a **curvature-proportional offset** in curves
+(+0.6 m at κ = −0.0056, −0.65 m at κ = +0.0030; ≈ 110 m × κ), and VP's own CTE
+reports it (+0.8 m) — not a camera bias, so `fusion.cte_bias_m` would be wrong.
+Two candidate causes were tested:
+- Actuator under-delivery: CARLA scales the wheel angle by the car's
+  speed-dependent `steering_curve` (0.869 at 9 m/s, measured 0.87). The
+  actuator now divides by it (`ACTUATOR_STEER_CURVE_COMP`, default on) so the
+  approved tire angle is realised. A/B on/off/on (`…213329Z`, `…213657Z`,
+  `…214017Z`): identical offsets and distances — the closed loop already
+  absorbed the gain. Kept as a contract correctness fix; not the offset cause.
+- CTE/yaw read at x_min: VP evaluates the fitted path at the nearest waypoint
+  (x_min = 8.3 m), where the lane heading differs from the vehicle's by
+  κ·x_min ≈ 0.044 rad; the logged yaw sits at 0.05–0.08 rad in curves. Fork
+  `fix/vp-lat-eval-at-vehicle` (`680edfd9`) adds `fusion.lat.cte_eval_x_m`
+  (default −1 = unchanged; 0 = at the vehicle). A/B on one build
+  (`652b72e1`): x_min `…220646Z` 1078 m, curve \|lane_off\| 0.57 m; x = 0
+  `…220319Z`, `…221013Z` left the lane at 7 m and hit the guardrail at 16–21 m
+  (yaw 141–160°). Extrapolating the fit 8 m back to where there is no data
+  destabilises the start. **Negative; not in the pin** (branch kept as the
+  record, one-off conf not committed).
+
+So the curve offset stays open as a known limitation: it is steady (≈ 110 m × κ,
+reproduced on every latfast run), bounded (≤ 0.8 m on this route at 9 m/s) and
+not caused by the actuator or by a camera bias. It is not speed-driven either:
+at 4 m/s the offset per curvature is larger (≈ 150 m × κ, curve |lane_off|
+0.75 m) with the old and the new filter alike (`…205648Z` 0.76 m, pin
+`…222103Z` 0.75 m) — so the tuned filter does not regress the 4 m/s demo, and
+the offset is a static balance, not understeer. The next place to look is the
+MPC cost balance in `lateral_planning.cpp` (`delta_weight` 45000 on
+`delta − delta_ff` vs `cte_weight` 10·(1+100κ)), not the measurement.
+
+MPC A/B (fork `exp/vp-mpc-cte-weight-40`, `a46fec07`, the commented-out
+earlier value; image `visionpilot:gpu-ros2-w40` = pin + this change):
+
+| cte_weight | Runs | curve \|lane_off\| | Result |
+|---|---|---|---|
+| 10 (pin) | 6 at 9 m/s | 0.57–0.60 m | 6/6 no contact |
+| 40 | `…224617Z` 9 m/s | **0.25 m** | 1079 m, no contact |
+| 40 | `…224946Z` 9 m/s | **0.18 m** | **spun out at 629–637 m** (yaw −49° → −163° in 2 s) |
+| 40 | `…225317Z` 4 m/s, 180 s | **0.39 m** (pin 0.75) | 740 m, no contact |
+
+The spin happens where the right edge line splits at a merge (90 km/h sign,
+frames at 94–96 s) — the same spot where every pin run first exceeds 1 m
+(~630 m) and recovers. A 4× CTE weight halves the curve offset but turns that
+measurement jump into a violent correction. Not adopted; the trade-off needs a
+jump-robust CTE (gating at lane splits) before a stiffer weight.
+
+The offset belongs to VP's own lateral controller: in the re-recorded example
+worlds (same curve, same VP perception, 4 m/s) VP_CONTROL held +0.74…+0.81 m
+while VP→SI — the SI's follower tracking VP's path polynomial — held
+−0.03…−0.04 m (`docs/media/README.md`).
+
+Pin validation (`rig/vp-e2e-demo` `9cae16f9`, rebuilt `visionpilot:gpu-ros2`,
+fresh worlds, 64 MiB buffers, compensation on): spawn 184 at 9 m/s
+`…223342Z-final-s184-9ms` 1083 m, no contact or latch, curve |lane_off| 0.57 m;
+slow lead `…final-slowlead-9ms` follows at 11.1–11.8 m, no contact; the same
+code at `652b72e1` with default confs: 4 m/s for 600 s `…222103Z` 2404 m, no
+contact, no latch, 0 adapter gaps > 0.5 s.
+
+Known limit (not the weave): on spawn 100 the latfast car drove 1264–1270 m and
+then hit the wall of a junction/ramp (κ = 0.0135, 30 km/h sign) after drifting
+across the dashed lanes of a multi-lane curve (`…214345Z`, `…215811Z` frames).
+
+## 014 — CARLA server stall latched the SI on odometry [single-run]
+
+`20260925T214750Z-p3f-slowlead-p3` (VPS, fresh world, 64 MiB buffers) ended
+with `SI fault: odometry arrived 0.43 s ago; latching SI_STOP`. Everything
+stopped together at 21:50:33 UTC: the scenario's 1 Hz ground-truth pose log
+ends at sim t=103 s, VP waited 1996 ms for a frame (`[Watchdog] … stage=wait`),
+the adapter saw a 2.09 s `xfer` gap with odometry age 2178 ms. The simulator
+stopped producing, and the SI stopped the car on stale odometry as designed.
+One occurrence in ~25 runs; odometry age is otherwise unchanged by 012
+(median ~200 ms, p99 ~300 ms with either buffer size). Not a VP or DDS fault;
+collect the CARLA container log if it recurs.
 
 ## Template for new entries
 
