@@ -174,6 +174,45 @@ whether the stall is in the image path, the planner, or the ROS publish
 chain; a VP-side "no frame processed in N s" watchdog would also surface
 it as a first-class fault instead of an input-staleness symptom.
 
+## 006 — VP path estimate goes straight on a curve at speed, running the car off-lane [single-run]
+
+On the SI rig (config 1, VP → SI_CONTROL) the car drove well for ~70 s /
+1.1 km at 20–21 m/s, then left the lane on a curve and contacted the
+barrier/off-road edge while still fast. VP never requested a slowdown;
+this is a VP-side lane/path estimate failure, not an SI ingress fault.
+
+Reproduction: `RIG_MODE=vp SI_MODE=si` on the fresh-world viewer run
+(VPS `77.104.167.149`, 2026-09-25 12:54 UTC), VP image
+`visionpilot:gpu-ros2-view` (`feat/vp-mjpeg-viewer@2ecc4146`, which only
+adds the MJPEG endpoint; driving code identical to
+`feat/vp-si-interface@3d4976e4`), Town04 empty rig.
+
+Evidence:
+- Ground truth (`scenario`): `lane_off` +0.25 → +0.90 → +2.15 → +2.65 in
+  3 s while `v` 20.58 → 18.76 → 14.31 → 8.31 → 0.01 m/s; the car stops
+  off-lane at x=383.0 y=96.7, `curve=-0.0085`.
+- VP plan at that section: `kappa≈0.007`, `tyre=0.0000 rad` — i.e. VP
+  believes the road is nearly straight; its speed horizon stays
+  `h0≈20.5 hn≈21` up to the event (adapter xfer), so no braking intent.
+- Applied control: `tire≈0.003–0.017 rad` (nearly straight) at 20+ m/s,
+  i.e. the SI follower faithfully tracked VP's (straight) path.
+- Coincident, but separate: a 1.1 s adapter publication gap
+  (`src=94.87 → 95.97`, the finding-005 stall) made SI latch SI_STOP
+  1.01 s after the last candidate; the actuator applied
+  `decision=1 brake=0.400` while the car was already at 16.2 m/s and
+  decelerating from the off-lane contact.
+
+Caveat: VP's `plan:` lines carry no timestamps, so the kappa/tyre values
+above are from the stopped car at the same location; the path shape
+during the event is inferred from the near-zero applied steering and the
+ground-truth lane loss.
+
+Status + follow-up: `single-run`, VP-side (separate from the SI ingress
+work). Next: timestamp VP's path output (`path_a/b/c`, `kappa`, `cte`)
+and reproduce the same curve; a VP-side curvature/path sanity check (or
+the unselected-Autoware cross-check discussed in the contract) would
+catch a straight-on-curve plan before it reaches the follower.
+
 ## Template for new entries
 
 ## NNN — Title [single-run]
