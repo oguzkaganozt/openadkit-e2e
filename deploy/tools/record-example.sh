@@ -3,7 +3,7 @@
 # and CARLA camera streams are kept separately: the VP stream MUST end when
 # the selected VP container is cut, while CARLA continues to show SI braking.
 # The two streams can then be assembled into a labeled, compressed clip.
-# Usage: VISIONPILOT_IMAGE=visionpilot:gpu-ros2-view2 \
+# Usage: VISIONPILOT_IMAGE=visionpilot:gpu-ros2 \
 #        ./deploy/tools/record-example.sh vp-control [drive_seconds]
 # Modes: vp-control (VP command passthrough), vp-si (VP trajectory → SI),
 #        autoware-si (native Autoware trajectory → SI).
@@ -33,7 +33,7 @@ if [[ ! "$drive_sec" =~ ^[0-9]+$ ]] || ((drive_sec < 10)); then
 fi
 export PREVIEW_AUTO=0
 if [[ "$RIG_MODE" == vp ]]; then
-  export VISIONPILOT_IMAGE="${VISIONPILOT_IMAGE:-visionpilot:gpu-ros2-view2}"
+  export VISIONPILOT_IMAGE="${VISIONPILOT_IMAGE:-visionpilot:gpu-ros2}"
   export VISIONPILOT_CONF="${VISIONPILOT_CONF:-vision_pilot.demo.conf}"
 fi
 
