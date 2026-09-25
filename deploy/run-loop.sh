@@ -88,7 +88,10 @@ wait_for_log() {
   local pattern="$2"
   local description="$3"
   for _ in $(seq 1 60); do
-    if docker logs --since "$started_at" "$container" 2>&1 | grep -q "$pattern"; then
+    # Read the full docker log stream: grep -q exits on the first match and
+    # makes `docker logs` die with SIGPIPE under pipefail when VP emits verbose
+    # fusion logs. That falsely reports a missing readiness marker.
+    if docker logs --since "$started_at" "$container" 2>&1 | grep "$pattern" >/dev/null; then
       echo "$description ready"
       return 0
     fi

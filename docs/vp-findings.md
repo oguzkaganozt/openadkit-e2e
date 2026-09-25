@@ -165,6 +165,14 @@ Evidence:
   VP process** (busy but not publishing), not camera, bridge, DDS
   transport, GPU saturation or host throttling; per-stage stopwatch
   instrumentation in the VP pipeline is the next step.
+- 2026-09-25 17:15:57.508–17:15:58.850 UTC, a fresh **4 m/s** VP→SI demo
+  world showed a 1.342 s gap in VP `plan:` logs and a 1.386 s gap in
+  adapter `xfer` logs. SI latched `trajectory arrived 1.10 s ago` at
+  17:15:58.626, before the planned deliberate source cut, and the car
+  stopped in-lane (no collision). A prior fresh demo world latched the
+  same way after a 1.15 s trajectory gap. These are discarded demo
+  attempts, not source-cut gate measurements. The 4 m/s limit improves
+  lateral behavior; it does **not** remove the source-stall fault.
 
 Status + follow-up: confirmed (≥3 stalls observed). This is the top rig
 blocker: the vehicle cannot complete a long autonomous run while the
@@ -245,11 +253,75 @@ Evidence (2026-09-25, VPS `77.104.167.149`):
 - SI_CONTROL is unaffected: it consumes the path polynomial `a/b/c` with
   the SI's own follower, so no wall contact occurred in those runs.
 
-Fix: fork branch `fix/vp-steering-sign` (`fb147561`), negating only at the
-ROS publish boundary (`command.steering_tire_angle_rad =
+Fix: fork branch `rig/vp-e2e-demo` (`491743a9`; contains `fix/vp-steering-sign`
+`fb147561` plus `feat/vp-mjpeg-viewer` `2ecc4146` and the speed-HUD exposure
+fix), negating only at the ROS publish boundary (`command.steering_tire_angle_rad =
 -applied_steering`); the CAN `write()` path keeps its internal convention
 and the message contract stays "positive left". Status: fix in place,
-re-validation drive/video on the same rig pending.
+low-speed re-validation below (008) passed; the source-cut example is
+[`docs/media/vp-control.mp4`](media/vp-control.mp4). High-speed lane keeping
+remains open.
+
+## 008 — VP_CONTROL high-speed oscillation is not an actuator steer reset
+
+Reproduction (2026-09-25, VPS `77.104.167.149`): fresh `run-loop.sh` worlds,
+`visionpilot:gpu-ros2-view` (includes 007's publish-sign fix), SI in
+`VP_CONTROL`, `carla-rig-empty.json` (Town04, Lincoln mkz_2020, spawn 184).
+Only VP's `speed_limit` was changed between the trials below. The SI binary,
+CARLA actuator, camera, and map stayed the same. The 4 m/s start script missed
+a VP log readiness marker; SI was started separately in the still-idle fresh
+world, **before** the car moved. A read-only 20 Hz CARLA probe recorded the
+commanded control, actual left/right front-wheel angles, pose, and lane offset;
+it never ticks the world or writes controls (`deploy/tools/passive_steering_probe.py`).
+
+| VP speed limit | Ground-truth result (one run each, not reliability bounds) |
+|---|---|
+| 33.3 m/s (default) | 12.7 m/s peak; guardrail contact after ~158 m at sim t=39.7 s in the synchronized trace. Other fast runs reached ~126–178 m before failure. |
+| 9.0 m/s | 9.17 m/s peak; guardrail contact at sim t=40.7 s, ~141 m from spawn. Merely reducing to 9 m/s does not fix it. |
+| **4.0 m/s** | **105 s / 412 m** measured while moving, 2.72–4.40 m/s, no collision and no SI latch; CARLA lane offset −0.47 to +0.84 m. The test window ended while driving, not at a fault. |
+
+A second fresh 4 m/s world used `carla-rig-traffic.json` (14 spawned NPCs,
+ClearNoon, 0 fog): **55 s / 216 m**, 3.07–4.39 m/s, no collision or SI latch,
+CARLA lane offset +0.68 to +0.83 m. The nearby-NPC count during the drive
+was typically 2–3, not all 14 visible at once. The separate demo config
+`deploy/config/vision_pilot.demo.conf` records this operating point; the
+production/default `vision_pilot.conf` still has 33.3 m/s.
+
+Evidence: read-only traces `/tmp/opencode/steer-trace-{1628,diag9,diag4}.csv`
+and matching `vpcontrol-{1628,diag9,diag4}-{vp,scenario,si}.log`, plus
+`steer-trace-traffic4.csv` and `vpcontrol-traffic4-{scenario,si}.log` (local
+temporary evidence; do not commit raw recordings). The `CARLA
+VehiclePhysicsControl.steering_curve` on this car is `(0 km/h, 1.0), (20,
+0.9), (60, 0.8), (120, 0.7)`. During the fast trace the actual FL wheel was
+0.858 × the command at >5 m/s and 0.837 × at >10 m/s, matching the interpolated
+curve within ~0.001 rad; it did **not** return to zero between VP updates.
+The actuator continuously applies the last SI-approved payload on each loop.
+
+The VP plan does intermittently pass through near-zero and reverse sign. At
+16:28:56 UTC the VP filtered CTE was about −1.1 m as the car crossed to the
+left, and the applied tire angle was about −0.055 rad (right). At 16:28:57 the
+CARLA map reported the car about +1.3 m **right** of lane center, while VP's
+filtered CTE still said about −1.4 m and requested right correction. The raw
+camera CTE had already reversed sign. This is evidence of material estimator
+lag/mismatch during a rapid maneuver, **not** proof that CARLA ignores or
+forgets a command. The physical curve attenuation contributes to understeer;
+the trace does not isolate it as the sole cause of the later oscillation.
+
+Upstream comparison: [openadkit #147](https://github.com/autowarefoundation/openadkit/issues/147)
+and [vision_pilot #422](https://github.com/autowarefoundation/vision_pilot/pull/422)
+run the CES prototype with `speed_limit = 4.0`, CARLA 0.10 `Town04_Opt`,
+`vehicle.lincoln.mkz`, spawn 5, a 1280×720/FOV 60 camera at (1.25, 0, 1.58),
+its matching `H_carla.yaml` and C matrix, and CARLA-native Ackermann messages.
+Our 0.9.16 rig uses a different car, spawn, camera, homography, map variant,
+and SI-approved `VehicleControl`. Their CARLA Ackermann controller eventually
+normalizes steering to `VehicleControl.steer` with the maximum wheel angle; an
+API swap alone would not remove the vehicle's speed-dependent steering curve.
+In the lateral path, our publish-boundary negation (VP internal right-positive
+to ROS left-positive) and actuator negation (ROS left-positive to CARLA
+right-positive) cancel: both rigs command CARLA in VP's original sign.
+Our 4 m/s result reproduces a **similar stable operating point**, not their
+full CARLA 0.10/X5H/CR52 stack or one-lap gate. Do not treat the 4 m/s limit
+as a high-speed VP lateral-controller fix.
 
 ## Template for new entries
 
