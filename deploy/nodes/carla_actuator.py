@@ -95,6 +95,7 @@ class CarlaActuator(Node):
         self._payload = None
         self._actual_v = 0.0
         self._applied = 0
+        self._last_decision = None
 
         self._last_msg_mono = None
         self._session = None
@@ -149,6 +150,14 @@ class CarlaActuator(Node):
                     % (self._expected_seq, seq)
                 )
         self._expected_seq = max(seq, self._expected_seq or 0)
+
+        if decision != self._last_decision:
+            self.get_logger().info(
+                "SI control state: %s (session=%d seq=%d fault=%d)"
+                % ({0: "NORMAL", 1: "SI_STOP", 2: "HOLD"}[decision],
+                   session, seq, int(msg.fault_id))
+            )
+            self._last_decision = decision
 
         if decision == DECISION_HOLD:
             return
