@@ -213,6 +213,44 @@ and reproduce the same curve; a VP-side curvature/path sanity check (or
 the unselected-Autoware cross-check discussed in the contract) would
 catch a straight-on-curve plan before it reaches the follower.
 
+## 007 — DrivingCommand steering sign mirrored vs the contract; VP_CONTROL steered against the error [confirmed, fixed]
+
+In VP_CONTROL the SI passes VP's `DrivingCommand` through unchanged. Every
+run on the SI rig left the lane at the first gentle curve and hit the
+barrier at ~35 m (same pose each time: lane_off ≈ +2.5 m, yaw ≈ 116°,
+dist 35-37 m), while SI_CONTROL drove the *same* VP perception for
+kilometers. The lateral error grew in the same direction as VP's command:
+the published steering had the opposite sign of the declared contract, so
+the car steered against the correction.
+
+Reproduction: `RIG_MODE=vp SI_MODE=vp` on the SI rig (Town04, empty rig),
+VP image built from `feat/vp-si-interface` (default) and the experiment
+image `visionpilot:gpu-ros2-neg` (same source with the publish sign
+negated).
+
+Evidence (2026-09-25, VPS `77.104.167.149`):
+- Crash window, car drifting right: ground truth `lane_off` +0.07 → +0.52
+  → +1.90 → +2.60 m, yaw 86.7 → 98.5 → 116.1°, speed collapse 7.4 → 0.03.
+- Same window, VP command: `tire` +0.014 → -0.090 → -0.195 rad; the
+  actuator (contract-correct: `carla = -tire / max_steer`, and `carla`
+  positive turns the car right) applied +0.073 → +0.160 — i.e. further
+  right while the car was already right of centre.
+- `DrivingCommand.msg` declares `steering_tire_angle_rad (rad, positive
+  left)`, matching the Autoware/SI actuator convention; the raw plan value
+  published by `app/vision_pilot.cpp` was its mirror.
+- Experiment image with `command.steering_tire_angle_rad =
+  -applied_steering`: same rig drove **131 m centred** (lane_off +0.85 m,
+  yaw 50.7°), no collision; the run ended only when the known VP planning
+  stall latched the SI (`vp command arrived 1.12 s ago`).
+- SI_CONTROL is unaffected: it consumes the path polynomial `a/b/c` with
+  the SI's own follower, so no wall contact occurred in those runs.
+
+Fix: fork branch `fix/vp-steering-sign` (`fb147561`), negating only at the
+ROS publish boundary (`command.steering_tire_angle_rad =
+-applied_steering`); the CAN `write()` path keeps its internal convention
+and the message contract stays "positive left". Status: fix in place,
+re-validation drive/video on the same rig pending.
+
 ## Template for new entries
 
 ## NNN — Title [single-run]

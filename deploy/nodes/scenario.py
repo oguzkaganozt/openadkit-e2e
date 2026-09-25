@@ -142,10 +142,18 @@ def _setup_npc_traffic(world, traffic_manager, config, hero_spawn_index):
     bp_library = world.get_blueprint_library()
     map_ = world.get_map()
     spawn_points = map_.get_spawn_points()
+    hero_tf = (
+        spawn_points[hero_spawn_index]
+        if 0 <= hero_spawn_index < len(spawn_points)
+        else None
+    )
 
     npc_vehicles = []
+    used = {hero_spawn_index}
     for npc in config.get("npc_vehicles", []):
         count = npc.get("count", 1)
+        near_hero_m = npc.get("near_hero_m")
+        ahead_only = bool(npc.get("ahead", False))
         for _ in range(count):
             bp_filter = npc.get("type", "vehicle.*")
             candidates = bp_library.filter(bp_filter)
@@ -159,14 +167,45 @@ def _setup_npc_traffic(world, traffic_manager, config, hero_spawn_index):
 
             idx = npc.get("spawn_index")
             if idx is not None:
-                if not 0 <= idx < len(spawn_points):
-                    logging.warning("npc spawn_index %d out of range, skipping", idx)
+                if not 0 <= idx < len(spawn_points) or idx in used:
+                    logging.warning("npc spawn_index %d unavailable, skipping", idx)
                     continue
                 spawn_pt = spawn_points[idx]
+                used.add(idx)
+            elif near_hero_m and hero_tf is not None:
+                # Traffic where the hero can actually meet it: nearest free
+                # points, optionally restricted to those in front of the hero.
+                free = [i for i in range(len(spawn_points)) if i not in used]
+                if ahead_only:
+                    ahead = [
+                        i for i in free
+                        if _in_front(hero_tf, spawn_points[i].location)
+                    ]
+                    if ahead:
+                        free = ahead
+                free.sort(
+                    key=lambda i: spawn_points[i].location.distance(hero_tf.location)
+                )
+                in_range = [
+                    i for i in free
+                    if spawn_points[i].location.distance(hero_tf.location)
+                    <= float(near_hero_m)
+                ]
+                if in_range or free:
+                    idx = (in_range or free)[0]
+                    spawn_pt = spawn_points[idx]
+                    used.add(idx)
+                else:
+                    logging.warning("no free NPC spawn point left, skipping")
+                    continue
             else:
-                # avoid the hero's spawn point and any already-used ones
-                free = [p for i, p in enumerate(spawn_points) if i != hero_spawn_index]
-                spawn_pt = random.choice(free)
+                free = [i for i in range(len(spawn_points)) if i not in used]
+                if not free:
+                    logging.warning("no free NPC spawn point left, skipping")
+                    continue
+                idx = random.choice(free)
+                used.add(idx)
+                spawn_pt = spawn_points[idx]
 
             actor = world.try_spawn_actor(bp, spawn_pt)
             if actor is None:
@@ -271,6 +310,39 @@ def main(args):
 
         with open(args.file) as f:
             config = json.load(f)
+
+        # Optional weather from the rig JSON: either a preset name (e.g.
+        # "ClearNoon") or an object with "preset" plus parameter overrides
+        # (sun angle, cloudiness, fog, ...) for a softer camera image.
+        weather_cfg = config.get("weather")
+        if weather_cfg:
+            weather_fields = (
+                "cloudiness", "precipitation", "precipitation_deposits",
+                "wind_intensity", "sun_azimuth_angle", "sun_altitude_angle",
+                "fog_density", "fog_distance", "wetness", "fog_falloff",
+                "scattering_intensity", "mie_scattering_scale",
+                "rayleigh_scattering_scale",
+            )
+            params = carla.WeatherParameters()
+            name = weather_cfg if isinstance(weather_cfg, str) else weather_cfg.get("preset")
+            if name:
+                preset = getattr(carla.WeatherParameters, name, None)
+                if preset is None:
+                    logging.warning("unknown weather preset %s; using defaults", name)
+                else:
+                    for field in weather_fields:
+                        if hasattr(preset, field):
+                            setattr(params, field, getattr(preset, field))
+            if isinstance(weather_cfg, dict):
+                for field, value in weather_cfg.items():
+                    if field == "preset":
+                        continue
+                    if hasattr(params, field):
+                        setattr(params, field, value)
+                    else:
+                        logging.warning("weather parameter %s unsupported; ignored", field)
+            world.set_weather(params)
+            logging.info("weather applied: %s", weather_cfg)
 
         vehicle = _setup_vehicle(world, config)
         world.tick()
@@ -399,9 +471,17 @@ def main(args):
                             curve = 0.0
                     else:
                         lane_off, curve = float("nan"), float("nan")
+                    try:
+                        npcs_near = sum(
+                            1
+                            for npc in npc_vehicles
+                            if npc.is_alive and npc.get_location().distance(hl0) <= 120.0
+                        )
+                    except Exception:
+                        npcs_near = 0
                     logging.info(
                         "pose t=%.1fs x=%.1f y=%.1f yaw=%.1f v=%.2f "
-                        "lane_off=%+.2f curve=%+.4f dist=%.0f",
+                        "lane_off=%+.2f curve=%+.4f dist=%.0f npcs_near=%d",
                         sim_t[0],
                         hl0.x,
                         hl0.y,
@@ -410,6 +490,7 @@ def main(args):
                         lane_off,
                         curve,
                         dist_m,
+                        npcs_near,
                     )
                 except Exception as exc:
                     logging.debug("pose log skipped: %s", exc)
