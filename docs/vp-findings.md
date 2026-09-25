@@ -267,7 +267,9 @@ remains open.
 Reproduction (2026-09-25, VPS `77.104.167.149`): fresh `run-loop.sh` worlds,
 `visionpilot:gpu-ros2-view` (includes 007's publish-sign fix), SI in
 `VP_CONTROL`, `carla-rig-empty.json` (Town04, Lincoln mkz_2020, spawn 184).
-Only VP's `speed_limit` was changed between the trials below. The SI binary,
+Only VP's `speed_limit` was changed between the trials below (configs:
+`deploy/config/vision_pilot.diag9.conf` and `...diag4.conf`, one-line
+derivatives of the rig viewer config). The SI binary,
 CARLA actuator, camera, and map stayed the same. The 4 m/s start script missed
 a VP log readiness marker; SI was started separately in the still-idle fresh
 world, **before** the car moved. A read-only 20 Hz CARLA probe recorded the
