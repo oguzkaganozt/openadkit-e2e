@@ -24,6 +24,7 @@ ACTUATOR_CONTAINER="${ACTUATOR_CONTAINER:-openadkit-e2e-carla-actuator}"
 SOURCE_CONTAINER="${SOURCE_CONTAINER:-openadkit-e2e-adapter}"
 WAIT_SEC="${WAIT_SEC:-20}"
 PREFLIGHT_SEC="${PREFLIGHT_SEC:-10}"
+NORMAL_WINDOW_SEC="${NORMAL_WINDOW_SEC:-15}"
 
 log_section() {
   echo
@@ -36,8 +37,8 @@ if docker logs --since "${PREFLIGHT_SEC}s" "$SI_CONTAINER" 2>&1 | grep -qa "SI_S
   echo "FAIL: SI latched within the last ${PREFLIGHT_SEC}s; fix the rig before measuring" >&2
   exit 1
 fi
-if ! docker logs --since "${PREFLIGHT_SEC}s" "$ACTUATOR_CONTAINER" 2>&1 | grep -qa "decision=0"; then
-  echo "FAIL: no recent NORMAL applied control; is the car driving?" >&2
+if ! docker logs --since "${NORMAL_WINDOW_SEC}s" "$ACTUATOR_CONTAINER" 2>&1 | grep -qa "decision=0"; then
+  echo "FAIL: no NORMAL applied control in the last ${NORMAL_WINDOW_SEC}s; is the car driving?" >&2
   exit 1
 fi
 
