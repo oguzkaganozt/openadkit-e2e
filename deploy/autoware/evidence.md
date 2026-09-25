@@ -39,12 +39,12 @@ TRANSIENT_LOCAL to satisfy the Autoware behavior planner.
 - Runtime domain-1 graph audit (`deploy/autoware/audit_graph.py`) **PASS**:
   sole publisher of `/planning/scenario_planning/trajectory` was
   `/planning/planning_validator`; `/vehicle/driving_reference` had zero
-  publishers; `/control/trajectory_follower/control_cmd` was published only
-  by `/safety_island_bridge_1`; `/control/command/control_cmd` and
-  `/control/command/actuation_cmd` had zero publishers. The VP and adapter
-  containers were absent from `docker ps`. On domain 2 the DDS bridge was the
-  sole trajectory publisher and the bare-DDS SI was its subscriber;
-  `ApprovedRequest` had one bare-DDS SI publisher.
+  publishers; **zero** publishers on `/control/trajectory_follower/control_cmd`,
+  `/control/command/control_cmd` and `/control/command/actuation_cmd`. The VP
+  and adapter containers were absent from `docker ps`. On domain 2 the DDS
+  bridge was the sole trajectory publisher, the bare-DDS SI was its
+  subscriber, and `carla_actuator.py` is the only process that writes CARLA
+  controls, consuming `ApprovedRequest` directly.
 - Domain-2 `deploy/tools/si_probe.py`, 35 s: **234 ApprovedRequest messages,
   234 NORMAL, 0 SI_STOP, 0 HOLD**, `mode=0` (SI_CONTROL),
   `selected_source=0` (FOLLOWER), one SI session, sequence gaps 0,
@@ -64,14 +64,12 @@ the rig was shut down.
 
 ## Limits / remaining gates
 
-This passes the Autoware-planning-to-SI **bounded smoke run**, not the final
-actuator safety gate. The CARLA bridge still consumes the SI's legacy
-`control_cmd` transition surface and applies/speed-regulates/timeout-brakes
-CARLA. The ApprovedRequest-only single-writer actuator and fault-detection →
-CARLA-applied-stop ≤500 ms measurement remain E2E #2. The VP adapter still
-reuses `/planning/scenario_planning/trajectory`; the distinct VP candidate
-ingress required by the shared SI #62 contract remains open, so source
-identity across both simultaneously active trajectory publishers is not yet
-proven. Empty-world perception is a simulation fixture, not a real-world
-perception solution. The prebuilt OSM also logs a missing `format_version`
-warning despite loading and routing successfully.
+Re-validated on a fresh world after E2E #2 landed: the CARLA controls came
+from the ApprovedRequest-only single-writer actuator, the domain-1 audit
+showed no control writers of any kind, a 30 s domain-2 probe recorded 199
+NORMAL decisions (mode=0, selected_source=0) and stopping the
+`autoware-planning` container produced an SI latch and a CARLA-applied stop
+within **8 ms** of SI detection (see `docs/e2e2-stop-gate.md`, "SI_CONTROL +
+Autoware" row). Empty-world perception remains a simulation fixture, not a
+real-world perception solution, and the prebuilt OSM still logs a missing
+`format_version` warning despite loading and routing successfully.
