@@ -7,7 +7,7 @@ usage() {
 Usage: ./deploy/setup.sh [--cpu|--gpu]
 
 Installs Docker Engine, Compose, python3-venv, and (on GPU hosts) the NVIDIA
-container runtime. Mode can also be set with COMPUTE=cpu|gpu (default: auto,
+container runtime, and raises the host socket buffer limits for DDS. Mode can also be set with COMPUTE=cpu|gpu (default: auto,
 which uses the GPU when nvidia-smi works). Requires Ubuntu and sudo; GPU mode
 additionally requires a working NVIDIA driver (nvidia-smi).
 EOF
@@ -112,6 +112,18 @@ fi
 sudo systemctl enable --now docker
 sudo systemctl restart docker
 sudo usermod -aG docker "$USER"
+
+# The bridge publishes 7.4 MB camera frames (CycloneDDS) that VisionPilot
+# receives over UDP (FastDDS). With the stock 212 KB socket buffers the
+# fragments overflow, reliable repair stalls VP's input for up to seconds and
+# the SI latches on source staleness (findings 005/012). Persist larger limits.
+sudo tee /etc/sysctl.d/60-openadkit-e2e-dds.conf >/dev/null <<'EOF'
+net.core.rmem_max = 67108864
+net.core.rmem_default = 16777216
+net.core.wmem_max = 67108864
+net.core.wmem_default = 16777216
+EOF
+sudo sysctl --load /etc/sysctl.d/60-openadkit-e2e-dds.conf >/dev/null
 
 sudo docker compose version >/dev/null
 if [[ "$COMPUTE" == "gpu" ]]; then

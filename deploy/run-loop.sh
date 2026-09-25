@@ -136,6 +136,17 @@ if [[ ! -x "$SI_BIN" ]]; then
   echo "Build first: $ROOT/deploy/build.sh --dds-interface <nic>" >&2
   exit 1
 fi
+# VP receives 7.4 MB camera frames over UDP; small socket buffers starve it
+# for up to seconds and the SI latches on source staleness (finding 012).
+# Refuse to measure on such a host; DDS_BUFFER_CHECK=0 skips the check.
+if [[ "${DDS_BUFFER_CHECK:-1}" != "0" ]]; then
+  rmem_default="$(sysctl -n net.core.rmem_default)"
+  if ((rmem_default < 16777216)); then
+    echo "net.core.rmem_default=$rmem_default is below 16 MiB; run $ROOT/deploy/setup.sh" >&2
+    echo "(or: sudo sysctl -w net.core.rmem_max=67108864 net.core.rmem_default=16777216)" >&2
+    exit 1
+  fi
+fi
 echo "SI supervision mode: $SI_MODE ($SI_BIN)"
 echo "Rig candidate: $RIG_MODE ($RIG_JSON); both publishers: $BOTH_SOURCES"
 if [[ "$RIG_MODE" == "autoware" || "$BOTH_SOURCES" == 1 ]]; then
