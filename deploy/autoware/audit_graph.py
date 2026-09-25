@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Read-only ROS-domain-1 publisher audit for the Autoware→SI run.
 
-Run inside the autoware-planning container after run-loop starts SI. This
-checks candidate provenance and absence of an Autoware control publisher;
-it does NOT claim the legacy CARLA bridge is already ApprovedRequest-only.
+Run inside the autoware-planning container after run-loop starts SI. The
+single CARLA control writer is carla_actuator.py on domain 2 consuming
+ApprovedRequest; on domain 1 this audit requires the Autoware trajectory
+candidate and zero control writers of any kind.
 """
 
 import json
@@ -50,12 +51,9 @@ def main() -> None:
         if publishers["/perception/object_recognition/objects"] != ["/empty_scene_fixture"]:
             raise RuntimeError("empty-world fixture absent or multiple perception writers")
         for topic in TOPICS[3:]:
-            if any(not writer.startswith("/safety_island_bridge_")
-                   for writer in publishers[topic]):
+            if publishers[topic]:
                 raise RuntimeError(f"unexpected control writer on {topic}: {publishers[topic]}")
-        if len(publishers["/control/trajectory_follower/control_cmd"]) != 1:
-            raise RuntimeError("legacy SI bridge output not found on domain 1")
-        print("Autoware candidate isolation: PASS", flush=True)
+        print("Autoware candidate isolation: PASS (no domain-1 control writers)", flush=True)
     finally:
         node.destroy_node()
         rclpy.try_shutdown()

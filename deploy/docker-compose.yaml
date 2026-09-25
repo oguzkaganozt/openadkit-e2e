@@ -99,6 +99,34 @@ services:
       - carla
     restart: "no"
 
+  # E2E #2: the only process that writes CARLA vehicle controls. It consumes
+  # the SI's ApprovedRequest directly on domain 2 (no bridge hop) and has no
+  # watchdog brake, speed target or latch of its own; SI owns every stop
+  # decision. The telemetry bridge above never calls apply_control().
+  carla-actuator:
+    image: ${ADAPTER_IMAGE:-openadkit-e2e-adapter:latest}
+    container_name: openadkit-e2e-carla-actuator
+    <<: *run-logging
+    network_mode: host
+    ipc: host
+    env_file:
+      - config.env
+    environment:
+      - ROS_DOMAIN_ID=2
+    volumes:
+      - ./nodes:/opt/nodes:ro
+      - ./config/cyclonedds.xml:/autoware/cyclonedds.xml:ro
+      - /tmp/carla-0.9.16-cp310-cp310-manylinux_2_31_x86_64.whl:/opt/carla-0.9.16-cp310-cp310-manylinux_2_31_x86_64.whl:ro
+    command: >
+      bash -lc "source /opt/ros/$${ROS_DISTRO}/setup.bash &&
+      source /opt/autoware/setup.bash &&
+      python3 -c 'import carla' 2>/dev/null ||
+      pip3 install /opt/carla-0.9.16-cp310-cp310-manylinux_2_31_x86_64.whl &&
+      exec python3 /opt/nodes/carla_actuator.py"
+    depends_on:
+      - carla
+    restart: "no"
+
   domain-bridge:
     image: ${BRIDGE_IMAGE:-openadkit-e2e-domain-bridge:latest}
     container_name: openadkit-e2e-bridge

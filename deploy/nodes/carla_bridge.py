@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""SI DDS ↔ CARLA RPC. VP steering_cmd is not used."""
+"""CARLA telemetry -> SI DDS: camera, ground-truth odometry and /clock only.
+
+Control application was moved to the single-writer carla_actuator.py (E2E #2):
+this bridge no longer subscribes to any control topic and never writes
+vehicle.apply_control(); it cannot drive or brake the car."""
 
 import math
 import threading
@@ -12,7 +16,6 @@ import cv2
 import numpy as np
 import os
 import rclpy
-from autoware_control_msgs.msg import Control
 from autoware_vehicle_msgs.msg import SteeringReport
 from builtin_interfaces.msg import Time
 from geometry_msgs.msg import AccelWithCovarianceStamped
@@ -46,36 +49,12 @@ def _sim_stamp(seconds: float) -> Time:
     return stamp
 
 
-STOP_SPEED_MPS = 0.05
-CRUISE_THROTTLE_PER_MPS = 0.12
-SPEED_P_GAIN = 0.15
-ACCEL_THROTTLE_GAIN = 0.08
-BRAKE_DECEL_GAIN = 0.25
-MAX_THROTTLE = 0.5
-CONTROL_TIMEOUT_SEC = 0.5
 # Stream watchdog (s): if the world ticks but no camera frame arrives for
 # this long, the sensor session was purged server-side (e.g. another client
 # changed the world); the CARLA client would otherwise keep requesting the
 # dead stream id until the server's RPC starves. Re-listen to get a fresh
 # session instead.
 STREAM_WATCHDOG_SEC = 5.0
-
-
-def carla_longitudinal(cmd_v: float, cmd_a: float, actual_v: float) -> tuple[float, float]:
-    if cmd_v <= STOP_SPEED_MPS and cmd_a <= 0.0:
-        return 0.0, 0.4
-    speed_error = cmd_v - actual_v
-    # An explicit SI decel demand (<= -0.5 m/s^2) brakes even before the
-    # velocity error turns negative (decelerating into a falling target);
-    # the threshold keeps regulation chatter on throttle.
-    if speed_error < -0.4 or cmd_a <= -0.5 or (cmd_a < 0.0 and speed_error < 0.0):
-        return 0.0, min(1.0, max(-cmd_a * BRAKE_DECEL_GAIN, -speed_error * 0.5))
-    throttle = (
-        CRUISE_THROTTLE_PER_MPS * max(cmd_v, 0.0)
-        + SPEED_P_GAIN * speed_error
-        + ACCEL_THROTTLE_GAIN * max(cmd_a, 0.0)
-    )
-    return max(0.0, min(MAX_THROTTLE, throttle)), 0.0
 
 
 _jpeg = None
@@ -137,19 +116,13 @@ class CarlaBridge(Node):
         self._world = None
         self._vehicle = None
         self._camera = None
-        self._last_steer = 0.0
-        self._control_count = 0
         self._http_server = None
         self._lock = threading.Lock()
         self._stop = False
-        self._pending_ctrl = None
-        self._pending_ctrl_at = 0.0
         self._ros_image = None
         self._sample = None
         self._last_frame = None
         self._last_frame_at = 0.0
-        self._actual_v = 0.0
-        self._max_steer = None
         self._preview_frame = None
         self._camera_count = 0
         self._camera_started = time.monotonic()
@@ -186,9 +159,6 @@ class CarlaBridge(Node):
         # (the Autoware planning configuration does). Stamped with the same
         # source-identity time as the ego topics.
         self.clock_pub = self.create_publisher(Clock, "/clock", 1)
-        self.create_subscription(
-            Control, "/control/trajectory_follower/control_cmd", self._on_control, 1
-        )
         threading.Thread(target=self._http, daemon=True).start()
         threading.Thread(target=self._preview_loop, daemon=True).start()
         threading.Thread(target=self._snap_loop, daemon=True).start()
@@ -265,7 +235,6 @@ class CarlaBridge(Node):
                 self.get_logger().warn("camera listen failed: %s" % exc)
 
     def _publish_sample(self, sample):
-        last_steer = sample.get("steer", self._last_steer)
         qx, qy, qz, qw = _quat_from_yaw(sample["yaw"])
         # Source identity: stamp with the CARLA simulated time of the
         # sampled frame (not the publication time) so camera and ego
@@ -306,7 +275,7 @@ class CarlaBridge(Node):
 
         steer = SteeringReport()
         steer.stamp = stamp
-        steer.steering_tire_angle = last_steer
+        steer.steering_tire_angle = sample["steer"]
         self.steer_pub.publish(steer)
 
     def _carla_loop(self):
@@ -320,21 +289,6 @@ class CarlaBridge(Node):
                 if vehicle is None or not vehicle.is_alive:
                     time.sleep(0.1)
                     continue
-                if self._max_steer is None:
-                    physics = vehicle.get_physics_control()
-                    max_steer = (
-                        math.radians(physics.wheels[0].max_steer_angle)
-                        if physics.wheels
-                        else 1.0
-                    )
-                    self._max_steer = max_steer if max_steer > 1e-6 else 1.0
-                with self._lock:
-                    ctrl = self._pending_ctrl
-                    ctrl_at = self._pending_ctrl_at
-                if ctrl is not None:
-                    if time.monotonic() - ctrl_at > CONTROL_TIMEOUT_SEC:
-                        ctrl = carla.VehicleControl(throttle=0.0, brake=0.4, steer=0.0)
-                    vehicle.apply_control(ctrl)
                 # Stream watchdog: the world is ticking (find_actors got a
                 # live vehicle) but no camera frame arrived for a while, so
                 # the sensor session was purged server-side. Without this,
@@ -397,7 +351,6 @@ class CarlaBridge(Node):
                 }
                 with self._lock:
                     self._sample = sample
-                    self._actual_v = actual_v
                 # Publish exactly once per sampled frame so every frame's
                 # CARLA time appears on the ego topics and can be matched
                 # to a camera frame.
@@ -407,7 +360,6 @@ class CarlaBridge(Node):
             except RuntimeError as exc:
                 self._vehicle = None
                 self._camera = None
-                self._max_steer = None
                 self._last_frame = None
                 self.get_logger().warn("hero became unavailable: %s" % exc)
             time.sleep(0.01)
@@ -417,7 +369,7 @@ class CarlaBridge(Node):
             deg = vehicle.get_wheel_steer_angle(carla.VehicleWheelLocation.FL_Wheel)
             return -math.radians(float(deg))
         except Exception:
-            return self._last_steer
+            return 0.0
 
     def _on_camera(self, image):
         try:
@@ -540,49 +492,6 @@ class CarlaBridge(Node):
         self._http_server = ThreadingHTTPServer(("0.0.0.0", 8090), _MjpegHandler)
         self._http_server.daemon_threads = True
         self._http_server.serve_forever()
-
-    def _on_control(self, msg: Control):
-        self._last_steer = float(msg.lateral.steering_tire_angle)
-        with self._lock:
-            sample = self._sample
-            actual_v = self._actual_v
-            max_steer = self._max_steer or 1.0
-        if sample is None:
-            return
-        ctrl = carla.VehicleControl()
-        # Autoware uses positive-left; CARLA's normalized input is positive-right.
-        ctrl.steer = max(-1.0, min(1.0, -self._last_steer / max_steer))
-        acc = float(msg.longitudinal.acceleration)
-        vel = float(msg.longitudinal.velocity)
-        ctrl.throttle, ctrl.brake = carla_longitudinal(vel, acc, actual_v)
-        ctrl.hand_brake = False
-        ctrl.manual_gear_shift = False
-        with self._lock:
-            self._pending_ctrl = ctrl
-            self._pending_ctrl_at = time.monotonic()
-        self._control_count += 1
-        if self._control_count == 1 or self._control_count % 100 == 0:
-            pose_x = sample["x"] if sample else 0.0
-            pose_y = -sample["y"] if sample else 0.0
-            pose_yaw = sample["yaw_deg"] if sample else 0.0
-            self.get_logger().info(
-                "applied control #%d: cmd_v=%.2f actual_v=%.2f cmd_a=%.2f "
-                "tire=%.3f carla=%.3f throttle=%.3f brake=%.3f "
-                "pose=(%.2f, %.2f, %.1fdeg)"
-                % (
-                    self._control_count,
-                    vel,
-                    actual_v,
-                    acc,
-                    self._last_steer,
-                    ctrl.steer,
-                    ctrl.throttle,
-                    ctrl.brake,
-                    pose_x,
-                    pose_y,
-                    pose_yaw,
-                )
-            )
 
     def destroy_node(self):
         self._stop = True

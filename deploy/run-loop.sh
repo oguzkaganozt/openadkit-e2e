@@ -167,7 +167,7 @@ for name in openadkit-e2e-carla openadkit-e2e-scenario openadkit-e2e-carla-bridg
              openadkit-e2e-adapter openadkit-e2e-si openadkit-e2e-visionpilot \
              openadkit-e2e-bridge openadkit-e2e-operation-mode \
              openadkit-e2e-autoware-planning openadkit-e2e-odom-to-tf \
-             openadkit-e2e-empty-scene; do
+             openadkit-e2e-empty-scene openadkit-e2e-carla-actuator; do
   docker rm -f "$name" >/dev/null 2>&1 || true
 done
 # Kill only host-launched instances of these two programs by their exact
@@ -201,6 +201,9 @@ fi
 "${COMPOSE[@]}" up -d --no-deps --force-recreate carla-bridge
 started_at="$(date --iso-8601=seconds)"
 wait_for_log openadkit-e2e-carla-bridge "camera frame #" "bridge camera"
+"${COMPOSE[@]}" up -d --no-deps --force-recreate carla-actuator
+started_at="$(date --iso-8601=seconds)"
+wait_for_log openadkit-e2e-carla-actuator "sole CARLA control writer" "CARLA actuator"
 if [[ "$RIG_MODE" == "vp" ]]; then
   "${COMPOSE[@]}" up -d --no-deps --force-recreate adapter visionpilot
   started_at="$(date --iso-8601=seconds)"
@@ -220,7 +223,7 @@ else
 fi
 "${COMPOSE[@]}" up -d --no-deps --force-recreate si
 started_at="$(date --iso-8601=seconds)"
-wait_for_log openadkit-e2e-carla-bridge "applied control #" "SI control"
+wait_for_log openadkit-e2e-carla-actuator "applied control #" "SI control"
 # PREVIEW_HOST wins; otherwise auto-detect the public IP (link-local EC2-style
 # metadata, then a public echo service), else fall back to local addresses.
 # Set PREVIEW_AUTO=0 to skip auto-detection entirely.

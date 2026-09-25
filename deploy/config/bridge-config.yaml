@@ -1,9 +1,5 @@
 name: safety_island_bridge
 topics:
-  control/trajectory_follower/control_cmd:
-    type: autoware_control_msgs/msg/Control
-    from_domain: 2
-    to_domain: 1
   vehicle/driving_command:
     type: visionpilot_msgs/msg/DrivingCommand
     from_domain: 1
