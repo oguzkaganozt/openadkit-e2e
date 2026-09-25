@@ -38,6 +38,13 @@ if docker logs --since "${PREFLIGHT_SEC}s" "$SI_CONTAINER" 2>&1 | grep -qa "SI_S
   echo "FAIL: SI latched within the last ${PREFLIGHT_SEC}s; fix the rig before measuring" >&2
   exit 1
 fi
+# The SI logs the latch only on its rising edge; read the current state from
+# the actuator's latest applied decision instead (logged every 100 cycles).
+latest_line="$(docker logs --tail 5 "$ACTUATOR_CONTAINER" 2>&1 | grep -a "applied control #" | tail -1)"
+if ! grep -qa "decision=0" <<<"$latest_line"; then
+  echo "FAIL: SI is not in NORMAL (latest: ${latest_line:-no applied control})" >&2
+  exit 1
+fi
 # The measurement must start from a moving car: read CARLA ground-truth speed
 # from the scenario telemetry, not from the actuator's periodic log lines.
 speed_line="$(docker logs --since 5s "$SCENARIO_CONTAINER" 2>&1 | grep -a "INFO: pose" | tail -1)"
