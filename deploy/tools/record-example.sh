@@ -15,10 +15,10 @@ mode="${1:?expected vp-control, vp-si, or autoware-si}"
 drive_sec="${2:-25}"
 case "$mode" in
   vp-control)
-    export RIG_MODE=vp SI_MODE=vp RIG_JSON=carla-rig-traffic.json
+    export RIG_MODE=vp SI_MODE=vp RIG_JSON="${RIG_JSON:-carla-rig-traffic.json}"
     source_container=openadkit-e2e-visionpilot ;;
   vp-si)
-    export RIG_MODE=vp SI_MODE=si RIG_JSON=carla-rig-traffic.json
+    export RIG_MODE=vp SI_MODE=si RIG_JSON="${RIG_JSON:-carla-rig-traffic.json}"
     source_container=openadkit-e2e-visionpilot ;;
   autoware-si)
     # The current Autoware empty-scene fixture does not accept NPCs. This

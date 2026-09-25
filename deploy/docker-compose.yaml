@@ -165,6 +165,10 @@ services:
       - ./config/${VISIONPILOT_CONF:-vision_pilot.conf}:/usr/share/visionpilot/config/vision_pilot.conf:ro
       - ./config/vision_pilot.carla.conf:/usr/share/visionpilot/config/vision_pilot_ros2.conf:ro
       - ./config/H.yaml:/usr/share/visionpilot/config/H.yaml:ro
+      # C must be generated from the SAME H (deploy/tools/gen-homography-c.sh).
+      # The image's built-in C comes from the in-tree example H and would warp
+      # AutoDrive's input with a mismatched calibration.
+      - ./config/homography_C_matrix.yaml:/usr/share/visionpilot/config/homography_C_matrix.yaml:ro
     entrypoint: ["/bin/bash", "-lc"]
     command:
       - source /opt/ros/jazzy/setup.bash && exec /usr/bin/VisionPilot --no-window
