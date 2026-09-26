@@ -26,13 +26,23 @@ Observed (fresh world, attempt 1):
 - the fault reached CARLA: `GATE STOP_APPLIED session=1485605219 seq=19
   mode=0 source=0 fault=1 frame=613 brake=0.400`.
 
-Note: the tick that clears the latch still publishes one final explicit stop
-with `fault_id=0` (`GATE STOP_APPLIED … seq=33 … fault=0`) before NORMAL
-resumes on the next tick. This is a one-cycle (15 ms) artifact of
-`callbackTimerControl` falling through to `publishSiStop()` in the same tick
-that clears `supervision_.latched`; it is fail-safe and does not change
-mode/source. It is documented rather than patched so the evidence binary
-stays fixed; a follow-up can suppress that sample.
+Fixed in SI `65b6875` (the pin since 2026-09-26): with the binary above, the
+tick that cleared the latch still published one final explicit stop with
+`fault_id=0` (`GATE STOP_APPLIED … seq=33 … fault=0`) before NORMAL resumed on
+the next tick — a one-cycle (15 ms) artifact of `callbackTimerControl` falling
+through to `publishSiStop()` after clearing `supervision_.latched`. The latch
+step is now `SupervisionState::stopThisTick()` (`supervision_latch.hpp`, host
+test `supervision_latch_test`): the clearing tick continues with NORMAL.
+
+A/B on 2026-09-26 (RTX 5080 rig, fresh worlds, same wrappers):
+
+| Binary | Replay | Restart | `fault=0` stops |
+|---|---|---|---|
+| `0df316e` (`a5481877…c8c82`) | PASS | — | **1** (`GATE STOP_APPLIED … seq=26 … fault=0`) |
+| `65b6875` (`4f9ec52f…1dd1c`) | PASS: 0 NORMAL while latched, 3 NORMAL after one re-enable, no mode/source change | PASS: `old_approved_after_new 0`, `unrequested_resume 0`, `bad_selection 0` | **0** |
+
+The stop gate was re-measured on `65b6875` (`e2e2-stop-gate.md`). Evidence is
+in the owner's archive `~/openadkit-e2e-evidence-20260926/si-validate/`.
 
 ## VP restart (new producer session, same SI process)
 

@@ -93,6 +93,17 @@ GATE STOP_RECV  session=1485100347 seq=203 mode=0 source=0 fault=1 wall_ns=17903
 GATE STOP_APPLIED session=1485100347 seq=203 mode=0 source=0 fault=1 frame=1691 ... brake=0.400
 ```
 
+## Revalidation — SI `65b6875` (SHA-256 `4f9ec52f…1dd1c`)
+
+The same three fresh-world gates after the re-enable fix
+(`si-ingress-faults.md`), 2026-09-26, RTX 5080 rig:
+
+| Configuration | Preflight speed | SI source watchdog | transport | **applied gate** |
+| --- | --- | --- | --- | --- |
+| SI_CONTROL + VP candidate (`BOTH_SOURCES=1`, stop adapter) | 9.68 m/s | 1.080 s | 1 ms | **9 ms** |
+| VP_CONTROL (stop visionpilot) | 10.72 m/s | 1.100 s | 1 ms | **11 ms** |
+| SI_CONTROL + Autoware (`BOTH_SOURCES=1`, stop autoware-planning) | 3.95 m/s | 1.020 s | 1 ms | **8 ms** |
+
 ## Concurrent-publisher isolation
 
 Both final SI_CONTROL worlds ran **both** planners at once
