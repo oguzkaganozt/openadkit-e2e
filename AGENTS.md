@@ -4,7 +4,8 @@ Closed-loop CARLA 0.9.16 rig: VisionPilot (VP) or Autoware plans, the Safety
 Island (SI) decides, exactly one process actuates. Current contract and
 evidence live in `docs/e2e2-stop-gate.md` (ingress + stop gate),
 `docs/si-ingress-faults.md` (latch/re-enable), and `docs/vp-findings.md`
-(numbered findings with an entry template; 006/008–010 are open).
+(numbered findings with an entry template; open work is listed in
+`todo.md`: 013's curve offset and junction/ramp handling).
 
 ## Commands
 
@@ -15,7 +16,7 @@ evidence live in `docs/e2e2-stop-gate.md` (ingress + stop gate),
 python3 -m unittest discover -s adapter -v        # the only runnable test suite
 ```
 
-- Test sources exist only in `adapter/`; `tests/` is untracked stale pycache.
+- Test sources exist only in `adapter/`.
 - Stop-gate measurement on a driving rig: `deploy/tools/stop-gate-test.sh`
   (see its header for the gate definition). Fresh-world evidence wrappers:
   `deploy/tools/run-clean-gate.sh`, `run-clean-vp-{replay,restart}.sh`.
