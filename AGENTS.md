@@ -95,10 +95,11 @@ python3 -m unittest discover -s adapter -v        # the only runnable test suite
 - `fusion.lat.cte_eval_x_m = 0` (branch `fix/vp-lat-eval-at-vehicle`, not in
   the pin) crashes the car at launch (013); don't reintroduce it.
 
-## Stale docs
+## Docs
 
-`README.md` and `deploy/README.md` predate the single-binary SI ingress and the
-separate actuator; they still describe adapter-authored stops and a
-`control_cmd` applied by the bridge. `docs/vp-si-integration-plan.md` is
-explicitly historical. When prose conflicts, trust `deploy/run-loop.sh`,
-`deploy/docker-compose.yaml`, and `docs/e2e2-stop-gate.md`.
+`README.md` (architecture, modes, status) and `deploy/README.md` (run knobs,
+services, SI interfaces, tools) describe the current single-binary SI ingress
+and the separate actuator; keep them in step with code changes.
+`docs/vp-si-integration-plan.md` is explicitly historical. When prose
+conflicts, trust `deploy/run-loop.sh`, `deploy/docker-compose.yaml`, and
+`docs/e2e2-stop-gate.md`.
