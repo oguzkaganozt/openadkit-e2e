@@ -31,7 +31,8 @@ python3 -m unittest discover -s adapter -v        # the only runnable test suite
   wall ms to files). Look at the frames at the moments the logs point to.
 - One-shot evidence run (fresh world + trace + frames + all container logs):
   `deploy/tools/run-evidence.sh <label> [drive_sec]`, rig selected by the
-  same env as `run-loop.sh`. Findings 011–014 used this shape.
+  same env as `run-loop.sh`. Findings 011–014 used this shape; the numbers
+  in them come from `deploy/tools/analysis/*.py` run on those directories.
 
 `run-loop.sh` env: `RIG_MODE=vp|autoware`, `SI_MODE=si|vp`, `RIG_JSON=<rig>.json`,
 `VISIONPILOT_IMAGE/RUNTIME/CONF`, `SPAWN_INDEX`, `BOTH_SOURCES=1` (requires

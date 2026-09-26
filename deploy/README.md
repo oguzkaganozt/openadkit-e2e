@@ -95,6 +95,8 @@ All in `deploy/tools/`; each script's header documents its gate or output.
 | `run-clean-vp-replay.sh`, `run-clean-vp-restart.sh` | Identity faults, latch/re-enable, VP restart |
 | `record-example.sh`, `package-example.sh` | Example clips for `docs/media/` |
 | `image_stream_observer.py`, `measure-cadence.sh` | Camera-stream and VP cadence gaps |
+| `analysis/lane_metrics.py`, `analysis/curve_offset.py` | Lane keeping, collisions, filter lag and curve offset per run directory (013) |
+| `analysis/cipo_episodes.py`, `analysis/cadence_stalls.py` | CIPO episodes from VP logs (011); VP stage timing vs adapter gaps (012) |
 
 Run the CARLA-side probes with `/tmp/carla-venv/bin/python`, **after**
 `run-loop.sh` returns: it recreates CARLA, and an earlier client never sees the
