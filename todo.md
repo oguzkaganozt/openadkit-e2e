@@ -3,9 +3,13 @@
 Read `AGENTS.md` first. Every measurement needs a **fresh world**; use
 `deploy/tools/run-evidence.sh <label> [sec]` (trace + 1 Hz frames + all logs)
 and end each result as a numbered entry in `docs/vp-findings.md`. Look at the
-frames, not only the logs. Raw evidence of this session:
-`~/openadkit-e2e-evidence-20260925.tar.zst` (local) and `/root/records` on the
-rig; `/tmp/opencode/` is temporary.
+frames, not only the logs. The 2026-09-25 VPS rig has been released; every
+`/root/...` path cited in `docs/` lives in the owner's local archives
+`~/openadkit-e2e-evidence-20260925.tar.zst` (`vps-records/` = `/root/records`,
+`local-opencode/` = `/tmp/opencode`) and
+`~/openadkit-e2e-evidence-20260925-vps-root.tar.zst` (the rest of `/root`,
+incl. `si-*-evidence-20260925/`). A new rig needs `deploy/setup.sh` (socket
+buffers) before any measurement.
 
 ## Closed
 
