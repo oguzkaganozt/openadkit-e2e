@@ -8,8 +8,10 @@ frames, not only the logs. The 2026-09-25 VPS rig has been released; every
 `~/openadkit-e2e-evidence-20260925.tar.zst` (`vps-records/` = `/root/records`,
 `local-opencode/` = `/tmp/opencode`) and
 `~/openadkit-e2e-evidence-20260925-vps-root.tar.zst` (the rest of `/root`,
-incl. `si-*-evidence-20260925/`). A new rig needs `deploy/setup.sh` (socket
-buffers) before any measurement.
+incl. `si-*-evidence-20260925/`). The 2026-09-26 RTX 5080 rig's runs (SI
+re-enable A/B, 015, 016, final validation) are in
+`~/openadkit-e2e-evidence-20260926/` (`si-validate/`, `vps-records/`). A new
+rig needs `deploy/setup.sh` (socket buffers) before any measurement.
 
 ## Closed
 
@@ -40,11 +42,14 @@ Next: gate CTE jumps at lane splits/merges (`lateral_fusion.cpp`), then retry a
 stiffer `cte_weight` (20–40); gate: curve |lane_off| and ≥ 6/6 no-contact
 runs on spawn 184 at 9 m/s. Item 2 shares the lane-split root.
 
-### 2. Junctions / ramps (013 known limit)
-On spawn 100 the car reaches 1264–1330 m, then drifts across the dashed lanes
-of a multi-lane curve and meets the wall of a ramp (κ = 0.0135, 30 km/h sign).
-Needs its own finding with frames: lane association at lane splits and the
-curvature speed limit (`sqrt(mu·g/κ)`) at a 30 km/h bend.
+### 2. Lane splits / ramps / junctions (016, VP-side)
+Open-road lane keeping holds (2 × ~2.5 km at 9 m/s on spawn 184, 1780 m on
+spawn 100). Contacts happen only at the spawn-184 fork (~615 m, intermittent),
+the end-of-highway signalized junction (~2520 m, 2/2) and the spawn-100 ramp
+(~1270 m, 3/3 at default speed, intermittent at 9 m/s). Causes in 016: no
+lane-split handling, and a curve speed limit without preview (removed upstream
+in `6305ea90`). Report upstream (issue); drive-length tests should stop before
+2500 m on spawn 184.
 
 ### 3. Stopped lead at speed (002 → 015, VP-side)
 The pin hits a stopped lead at ~9 m/s. Causes are measured in 015: an IDM

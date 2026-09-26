@@ -5,7 +5,7 @@ Island (SI) decides, exactly one process actuates. Current contract and
 evidence live in `docs/e2e2-stop-gate.md` (ingress + stop gate),
 `docs/si-ingress-faults.md` (latch/re-enable), and `docs/vp-findings.md`
 (numbered findings with an entry template; open work is listed in
-`todo.md`: 013's curve offset, junction/ramp handling, 015's stopped lead).
+`todo.md`: 013's curve offset, 015's stopped lead, 016's lane splits/junctions).
 
 ## Commands
 
@@ -91,7 +91,7 @@ python3 -m unittest discover -s adapter -v        # the only runnable test suite
   9 m/s weave (006/008–010) by 013's tuned lateral filter, which the rig confs
   set (`fusion.lat.*`; `diag4`/`diag9` keep the old filter on purpose as A/B
   baselines). Still open: a curvature-proportional curve offset (≤ 0.8 m at
-  9 m/s, 013), junction/ramp handling, and a stopped lead hit at ~9 m/s
+  9 m/s, 013), lane splits / ramps / junctions (016), and a stopped lead hit at ~9 m/s
   (015: IDM sign bug, fusion velocity lag, near-field range).
   `vision_pilot.demo*.conf` stays at 4 m/s for the example clips.
 - VP perception/model limits are recorded as findings and reported upstream,

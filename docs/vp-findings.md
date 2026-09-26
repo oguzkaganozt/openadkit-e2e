@@ -40,6 +40,11 @@ Why estimator noise, not calibration:
 Earlier instances: fork latch-v7 runs grazed the right guardrail at
 ~0.65 m/s from the same spawn (main README, cold-start section).
 
+Not reproduced 2026-09-26 on pin `9cae16f9`: in all 25 fresh-world launches
+from spawn 184 (stopped, slow and stop-go leads; 015's runs) VP's parked CTE
+stayed ≤ 0.20 m and the truth `lane_off` ≤ 0.05 m over the first 60 m, no
+guardrail. Not bisected; the H/C pair fix (009) is the likely cause.
+
 ## 002 — Stopped-lead contact without CIPO latch [confirmed]
 
 Without the latch hold model, the ego does not hold short: it creeps to
@@ -587,7 +592,7 @@ slow lead `…final-slowlead-9ms` follows at 11.1–11.8 m, no contact; the same
 code at `652b72e1` with default confs: 4 m/s for 600 s `…222103Z` 2404 m, no
 contact, no latch, 0 adapter gaps > 0.5 s.
 
-Known limit (not the weave): on spawn 100 the latfast car drove 1264–1270 m and
+Known limit (not the weave; measured in 016): on spawn 100 the latfast car drove 1264–1270 m and
 then hit the wall of a junction/ramp (κ = 0.0135, 30 km/h sign) after drifting
 across the dashed lanes of a multi-lane curve (`…214345Z`, `…215811Z` frames).
 
@@ -671,6 +676,35 @@ candidate); 2 and 3 are fusion-design issues to raise upstream with this data;
 4 is a model/geometry limit to report upstream (issue). Rig tooling added for
 this: `carla-rig-stop-go.json` (`lead_vehicle.resume_s`: the lead drives off
 again 20 s after stopping).
+
+## 016 — Lane splits, a ramp and the end-of-highway junction break lane following [confirmed, open]
+
+With the current pin (`9cae16f9`, SI `65b6875`, RTX 5080 VPS, 2026-09-26,
+fresh worlds, `run-evidence.sh`), open-road lane keeping is sound: at 9 m/s
+(`diag9-latfast`, VP_CONTROL) the car drove the whole spawn-184 highway loop
+twice, ~2.5 km each, and spawn 100 for 1780 m, with no SI latch. Every contact
+seen on empty roads happens at one of three places, all outside plain lane
+keeping:
+
+| Place | Runs | Result |
+|---|---|---|
+| spawn 184, ~615 m: the road forks, the right edge line diverges | `…150300Z-final2-demo-4ms` (4 m/s, `demo.conf`, SI_CONTROL + VP) | VP flags "Right Lane Departure" while centred; raw CTE jumps −0.9…+1.0 m, the fused CTE runs to −3 then +5.7 m, the car swerves left across the lanes and into the guardrail at 643 m (SI latches afterwards: no path fit once off the road). Passed by both 9 m/s runs today and by 013's 600 s 4 m/s run; 013's `cte_weight` 40 spin-out was here too — intermittent. |
+| spawn 184, ~2520 m: the highway ends at a signalized junction with a κ ≈ 0.1 turn | `…145115Z-final2-s184-9ms-1`, `…145708Z-final2-s184-9ms-2` | 2/2: enters at 8.3–8.5 m/s, guardrail / wall at t ≈ 304–306 s. |
+| spawn 100, ~1270 m: ramp, κ = 0.0135, 30 km/h sign | default conf (speed limit 33.3): `…140709Z`, `…142819Z`, `…144801Z` | 3/3 wall at ~1279 m, entering at ~14 m/s. At 9 m/s: 013 2/2 wall, today `…151353Z-final2-s100-9ms` 1/1 through — intermittent. |
+
+Two VP-side causes are visible in the logs and frames:
+- No lane-split handling: at the fork the lane model follows the diverging
+  edge line (the HUD shows the path bending away while the car is centred),
+  and the fused CTE follows it.
+- The curve speed limit sees only the current curvature: `sqrt(mu·g/|κ|)`
+  from the κ at the car. Upstream `6305ea90` removed the curvature preview
+  (`t_preview`, filtered dκ) that used to slow the car before a bend, so it
+  enters the ramp and the junction turn at full speed (κ = 0.1 → 4.4 m/s
+  limit, reached only inside the turn).
+
+Junctions with traffic lights are outside VP's lane-following scope. Status:
+open, VP-side; report upstream (issue) with these runs. Evidence: owner's
+archive `~/openadkit-e2e-evidence-20260926/vps-records/`.
 
 ## Template for new entries
 
