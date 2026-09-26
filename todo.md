@@ -46,7 +46,18 @@ of a multi-lane curve and meets the wall of a ramp (κ = 0.0135, 30 km/h sign).
 Needs its own finding with frames: lane association at lane splits and the
 curvature speed limit (`sqrt(mu·g/κ)`) at a 30 km/h bend.
 
-### 3. P4 — upstream PRs (ready, need the owner's go)
+### 3. Stopped lead at speed (002 → 015, VP-side)
+The pin hits a stopped lead at ~9 m/s. Causes are measured in 015: an IDM
+closing-speed sign regression (plain code bug), two fusion-design issues
+(low-flag AD distance, unobservable track velocity) and a perception limit
+(no reliable range below ~8 m; AS+H reads ~2.4 m long). Per scope we record
+and report, not work around: file an upstream issue with 015's data, and
+draft PRs for the code-level branches below. Near-field heuristics
+(`exp/vp-near-field-hold`) were tried and dropped. Test with
+`carla-rig.json` (stopped lead), `carla-rig-stop-go.json`,
+`carla-rig-slow-lead.json`.
+
+### 4. P4 — upstream PRs (ready, need the owner's go)
 Branches are on the fork (`oguzkaganozt/autoware_vision_pilot`). Each applies
 cleanly on `autowarefoundation/vision_pilot` `main` (`d4d9be13`) on its own:
 
@@ -58,6 +69,9 @@ cleanly on `autowarefoundation/vision_pilot` `main` (`d4d9be13`) on its own:
 | `fix/vp-lat-fusion-config` `3391b28e` | feat(config): expose lateral fusion noise as fusion.lat.* keys |
 | `fix/vp-stdout-line-buffer` `4157a2d9` | fix(log): line-buffer stdout so log timestamps match events |
 | `fix/vp-ad-only-cipo` `c4e17bf0` | fix(fusion): AD-only CIPO may continue an AS-started track, not start one |
+| `fix/vp-idm-closing-speed` `b935d7dd` | fix(planning): IDM closing speed is ego speed minus lead speed (015) |
+| `fix/vp-ad-dist-needs-flag` `89aa01d6` | fix(fusion): AD distance needs AD's own CIPO flag when AS has the box (015, discuss) |
+| `fix/vp-long-fusion-config` `924cc8cc` | feat(fusion): expose longitudinal filter tuning as fusion.long.* keys (015, discuss) |
 
 The DrivingCommand/DrivingReference interface (`4c21cdf4`, `fe249310`,
 `3d4976e4`) and the steering-sign fix (`191551e0`, depends on it) belong in

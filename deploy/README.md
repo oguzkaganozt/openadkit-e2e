@@ -112,7 +112,7 @@ new hero.
 | `config/vision_pilot.diag4.conf`, `.diag9.conf`, `.diag9-latfast.conf` | A/B configs of findings 008–013 (diag4/diag9 keep the old lateral filter on purpose) |
 | [`config/vision_pilot.carla.conf`](config/vision_pilot.carla.conf) | VP ROS topics on the rig |
 | [`config/H.yaml`](config/H.yaml) + [`config/homography_C_matrix.yaml`](config/homography_C_matrix.yaml) | Camera homography; a **matched pair** — regenerate C with `tools/gen-homography-c.sh` after any H change |
-| `config/carla-rig*.json` | Rigs: `carla-rig` (lead that brakes to a stop, 3 NPCs), `-empty`, `-slow-lead` (4.09 m/s lead), `-traffic` (14 NPCs), `-autoware-demo` |
+| `config/carla-rig*.json` | Rigs: `carla-rig` (lead that brakes to a stop, 3 NPCs), `-empty`, `-slow-lead` (4.09 m/s lead), `-stop-go` (the lead drives off again `lead_vehicle.resume_s` = 20 s after stopping), `-traffic` (14 NPCs), `-autoware-demo` |
 | [`config/bridge-config.yaml`](config/bridge-config.yaml), [`config/cyclonedds.xml`](config/cyclonedds.xml) | Domain 1 → 2 topics (the complete list) and CycloneDDS networking |
 | [`docker-compose.yaml`](docker-compose.yaml) | Services and mounts; Python rig nodes live in [`nodes/`](nodes/) |
 

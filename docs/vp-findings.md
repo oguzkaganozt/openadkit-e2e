@@ -67,6 +67,9 @@ Evidence, run 2 (confirming, `/root/run-confirm002.log`):
   same pose (`x=-495.6 y=326.3`), continuous grinding contact
   `t=150.0–168.x`. Deterministic across runs.
 
+Revalidated 2026-09-26 on pin `9cae16f9`: still reproduces, at ~9 m/s with
+the default conf; causes and A/B in 015.
+
 ## 003 — Slow-lead rear-end without CIPO latch [confirmed]
 
 Without the latch, the ego does not slow for a slower rolling lead:
@@ -599,6 +602,75 @@ stopped producing, and the SI stopped the car on stale odometry as designed.
 One occurrence in ~25 runs; odometry age is otherwise unchanged by 012
 (median ~200 ms, p99 ~300 ms with either buffer size). Not a VP or DDS fault;
 collect the CARLA container log if it recurs.
+
+## 015 — Stopped lead hit at ~9 m/s: IDM closing-speed sign, fusion velocity lag, near-field range [confirmed, open]
+
+002 reproduces on the current pin, harder: with the default conf
+(`speed_limit = 33.3`, curvature-limited) the ego reaches ~10 m/s behind the
+default lead (`carla-rig.json`: 5 m/s for 15 s, then brakes to a stop) and hits
+it at ~9 m/s (`COLLISION t=25.5–25.6 s … impulse=(5542,7818,617)`), then
+pushes against it at throttle 0.47 with `cipo=false`.
+
+Reproduction: `RIG_MODE=vp SI_MODE=si RIG_JSON=carla-rig.json
+./deploy/tools/run-evidence.sh <label> 90`, pin `9cae16f9`, RTX 5080 VPS,
+2026-09-26 (`20260926T132532Z-smoke-vp-si`, `…133825Z-base-stoplead-2`, 2/2).
+Evidence for every run below: owner's archive
+`~/openadkit-e2e-evidence-20260926/vps-records/`.
+
+Four causes, each measured on these runs:
+
+1. **Planner code bug — IDM closing speed has the wrong sign** (upstream
+   `6305ea90`, 2026-08-10, changed `delta_v = -cipo_v` to `delta_v = cipo_v`).
+   Both planner headers and `test_planning.cpp` define `cipo_v` as the lead's
+   speed, the app passes the fused velocity *relative* to ego, and the IDM
+   treats it as closing speed. At 9.4 m/s and 20 m: stopped lead **+0.52**
+   m/s², lead pulling away at 14 m/s **−6.84** m/s² (fixed: −3.62 / +1.36;
+   host check against `longitudinal_planning.cpp`). Steady following
+   (Δv ≈ 0) is unaffected, which is why 003's slow lead is followed.
+2. **Fusion — a low-flag AutoDrive distance outweighs AS+H at range.** With an
+   AutoSpeed box present, AD's distance joins the particle filter at any flag.
+   At p = 10–30 % it read 26–36 m while AS+H tracked the lead from 71 to 44 m
+   (matching truth); AS+H noise grows with d² (16.8 m at 71 m vs 7.3 m for AD),
+   so the track sat at 34–40 m for 3.5 s with ~0 closing speed.
+3. **Fusion — the track velocity is unobservable.** `process_noise_dist_m =
+   2.0` m per step (0.05 before upstream `09feb20a`; the comment above it still
+   says keep it small) lets the distance follow the measurements without any
+   velocity, and every single-frame loss of the far box resets the track to
+   v = 0 (6 resets in one approach). Replaying the run's measurements through a
+   port of the filter: velocity 0.0 m/s at 62 m (truth −7.1); with 0.3 m
+   noise, a 6 m/s initial spread and a 0.5 s coast, −6.3 m/s.
+4. **Perception — the near field has no reliable range** (not fixed here). The
+   AutoSpeed box of the lead reaches the bottom of the 1024×512 frame at a
+   homography range of 8.3 m (`bbox=(…,512)` from ~4 m camera-to-rear), stays
+   there, and is lost at ~3 m. AS+H also reads **+2.2–2.9 m long** against
+   CARLA truth at 5–30 m (steady slow-lead following, so not a timing error);
+   AutoDrive at p ≥ 0.8 reads 0.5–1.7 m short and is right at ~4 m even at
+   p = 0.36. The pin follows a slow lead only because the low-flag AD pulls the
+   near range in (cause 2 works in its favour there).
+
+A/B (fresh worlds, default conf + the keys named; min centre gap 4.7 m =
+contact):
+
+| Variant | Stopped lead | Slow lead (4.09 m/s) |
+|---|---|---|
+| pin `9cae16f9` | 2/2 hit, t = 25.5 s | no contact, min centre 10.0 m |
+| 1 (`fix/vp-idm-closing-speed`) | hit, t = 30.5 s | — |
+| 1+2 (`fix/vp-ad-dist-needs-flag`) | 2/2 hit, t = 28.8 / 30.5 s | — |
+| 1+2+3 (`fix/vp-long-fusion-config`, keys above) | 2/2 hit, t = 29.4 / 29.5 s: brakes from ~46 m, 3.5 m/s at 17 m, then creeps in once the box clips | touch at t = 48.5 s (following at the 8.3 m floor) |
+
+1–3 move the start of braking from ~10 m to ~46 m (centre gap); what remains is 4. Near-field
+heuristics on top of that (`exp/vp-near-field-hold`: clipped box as an upper
+bound, hold the lost lead, an AS+H range offset) were tried in 3 iterations
+and dropped: each traded one failure for another (hold at the wrong range →
+creep into contact; stationary-lead hold → speed sawtooth and a low-speed
+swerve into the guardrail; hold never released when a lead was lost at 9.5 m).
+They would mask a perception limit rather than fix it.
+
+Status: **open, VP-side.** Pin unchanged. 1 is a plain code bug (draft-PR
+candidate); 2 and 3 are fusion-design issues to raise upstream with this data;
+4 is a model/geometry limit to report upstream (issue). Rig tooling added for
+this: `carla-rig-stop-go.json` (`lead_vehicle.resume_s`: the lead drives off
+again 20 s after stopping).
 
 ## Template for new entries
 

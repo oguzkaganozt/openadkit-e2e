@@ -375,6 +375,7 @@ def main(args):
         lead_cfg = config.get("lead_vehicle") or {}
         lead = None
         lead_t = 0.0
+        lead_resumed = False
         if lead_cfg.get("enabled"):
             lead = _spawn_lead(
                 world, vehicle, lead_cfg.get("ahead_m", 30.0), traffic_manager
@@ -404,7 +405,14 @@ def main(args):
             if lead is not None and lead.is_alive:
                 lead_t += settings.fixed_delta_seconds or 0.05
                 cruise_s = float(lead_cfg.get("cruise_s", 15.0))
-                if lead_t >= cruise_s:
+                # Optional stop-and-go: drive off again resume_s after braking.
+                resume_s = lead_cfg.get("resume_s")
+                if resume_s is not None and lead_t >= cruise_s + float(resume_s):
+                    if not lead_resumed:
+                        logging.info("lead resuming now (t=%.1fs)", lead_t)
+                        lead.set_autopilot(True, traffic_manager.get_port())
+                        lead_resumed = True
+                elif lead_t >= cruise_s:
                     if abs(lead_t - cruise_s) < 0.08:
                         logging.info("lead braking now (t=%.1fs)", lead_t)
                         lead.set_autopilot(False)
