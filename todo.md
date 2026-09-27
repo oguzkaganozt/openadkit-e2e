@@ -1,4 +1,4 @@
-# TODO — status after the 2026-09-25/26 work session
+# TODO — status after the 2026-09-25/27 work sessions
 
 Read `AGENTS.md` first. Every measurement needs a **fresh world**; use
 `deploy/tools/run-evidence.sh <label> [sec]` (trace + 1 Hz frames + all logs)
@@ -10,7 +10,9 @@ frames, not only the logs. The 2026-09-25 VPS rig has been released; every
 `~/openadkit-e2e-evidence-20260925-vps-root.tar.zst` (the rest of `/root`,
 incl. `si-*-evidence-20260925/`). The 2026-09-26 RTX 5080 rig's runs (SI
 re-enable A/B, 015, 016, final validation) are in
-`~/openadkit-e2e-evidence-20260926/` (`si-validate/`, `vps-records/`). A new
+`~/openadkit-e2e-evidence-20260926/` (`si-validate/`, `vps-records/`); the
+2026-09-27 RTX 5060 Ti rig's runs (native ingress, Ackermann actuator, example
+clips) are in `~/openadkit-e2e-evidence-20260927/`. A new
 rig needs `deploy/setup.sh` (socket buffers) before any measurement.
 
 ## Closed
@@ -83,7 +85,7 @@ cleanly on `autowarefoundation/vision_pilot` `main` (`d4d9be13`) on its own:
 The DrivingCommand/DrivingReference interface (`4c21cdf4`, `fe249310`,
 `3d4976e4`) and the steering-sign fix (`191551e0`, depends on it) belong in
 the existing draft PR #423 (`feat/ros2-native-motion-intent`). The SI branch
-`feat/si-supervisor-v0-1` (`65b6875`, incl. the re-enable fix) → `main` is a separate
+`feat/si-supervisor-v0-1` (`9909cec`: re-enable fix, native VP ingress) → `main` is a separate
 decision. Open as drafts, e.g.
 `gh pr create -R autowarefoundation/vision_pilot --draft --head oguzkaganozt:fix/vp-ad-only-cipo --base main`
 (single-commit branches; cherry-pick the three `rig/vp-e2e-demo` commits onto
