@@ -23,6 +23,7 @@ rig needs `deploy/setup.sh` (socket buffers) before any measurement.
 | Actuator tire-angle realisation | 013 | CARLA's speed-dependent steering curve delivered 0.87× the approved angle at 9 m/s; the actuator now compensates (contract fix, no lane-keeping change). |
 | CARLA server stall | 014 | One run: the simulator stopped; SI latched on stale odometry as designed. Watch for recurrence. |
 | P5 — housekeeping | — | `tests/__pycache__` deleted; evidence archived; VP clips re-recorded on the new pin (`docs/media/README.md`). |
+| 4 m/s speed oscillation (3.7–4.3 m/s) | `carla_actuator.py` | Actuator feedforward was 0.12·v (0.48 at 4 m/s; this car settles at 5.7 m/s on it). Now the measured hold-throttle table: 4 m/s holds 4.08–4.12 m/s (std 0.168 → 0.006); 9 m/s unchanged (std 0.24); gates 7/11 ms. |
 | Native VP ↔ SI ingress (no adapter) | `si-ingress-faults.md` | SI `e88f78f` reads `DrivingReference` itself; adapter container removed. Replay/restart PASS, gates 11/12/7 ms, 9 m/s drive 1363 m vs 1362 m with the adapter. |
 | SI re-enable 15 ms stop artifact | `si-ingress-faults.md` | SI `65b6875`: the latch-clearing tick resumes NORMAL. A/B: 1 → 0 `fault=0` stops; replay/restart PASS; gates 9/11/8 ms. |
 

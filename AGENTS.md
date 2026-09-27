@@ -45,7 +45,10 @@ evidence live in `docs/e2e2-stop-gate.md` (ingress + stop gate),
   it consumes SI `ApprovedRequest` on domain 2 and contains no watchdog, mode,
   or latch logic. It divides steer by the car's speed-dependent
   `steering_curve` so the approved tire angle is realised
-  (`ACTUATOR_STEER_CURVE_COMP=0` = legacy mapping; 013). `carla_bridge.py` is
+  (`ACTUATOR_STEER_CURVE_COMP=0` = legacy mapping; 013). Its throttle
+  feedforward is the car's measured hold-throttle table (`HOLD_THROTTLE`:
+  0.40 holds 4.45 m/s; above 5.7 m/s no throttle holds, so light overspeed
+  braking regulates); re-measure it if the vehicle changes. `carla_bridge.py` is
   telemetry only (camera, odom, steering, clock, preview on :8090) and must
   never actuate.
 - One SI binary reads `SI_SUPERVISION_MODE`/`SI_TRAJECTORY_SOURCE` once at

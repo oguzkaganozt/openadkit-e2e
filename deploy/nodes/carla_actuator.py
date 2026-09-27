@@ -48,8 +48,21 @@ DECISION_HOLD = 2
 # deterministic translation the bridge used, kept identical so the actuator
 # swap changes authority, not vehicle behavior.
 STOP_SPEED_MPS = 0.05
-CRUISE_THROTTLE_PER_MPS = 0.12
-SPEED_P_GAIN = 0.15
+# Throttle that holds a steady speed on the rig car (vehicle.lincoln.mkz_2020,
+# Town04 spawn 184), measured open loop in CARLA 0.9.16 on 2026-09-27. The
+# automatic transmission makes it strongly nonlinear: 0.40 holds 4.45 m/s,
+# 0.44-0.48 all settle at 5.1-5.7 m/s and 0.49 runs away past 16 m/s, so
+# 6-15 m/s cannot be held open loop and relies on the feedback term. The
+# former linear feedforward (0.12 per m/s) asked 0.48 at 4 m/s, which drives
+# this car towards 5.7 m/s, and kept it in a 3.7-4.3 m/s limit cycle.
+HOLD_THROTTLE = (
+    (0.0, 0.25), (0.9, 0.30), (1.6, 0.35), (4.45, 0.40), (5.1, 0.42),
+    (5.7, 0.48), (16.0, 0.49), (23.6, 0.60),
+)
+# Above this speed no constant throttle holds the car (the next gear runs
+# away), so speed is held against light braking instead.
+HOLD_OPEN_LOOP_MAX_MPS = 5.7
+SPEED_P_GAIN = 0.05
 ACCEL_THROTTLE_GAIN = 0.08
 BRAKE_DECEL_GAIN = 0.25
 MAX_THROTTLE = 0.5
@@ -63,17 +76,31 @@ APPLIED_LOG_INTERVAL = 100
 SILENCE_LOG_SEC = 5.0
 
 
+def hold_throttle(speed_mps: float) -> float:
+    points = HOLD_THROTTLE
+    if speed_mps <= points[0][0]:
+        return points[0][1]
+    for (v0, t0), (v1, t1) in zip(points, points[1:]):
+        if speed_mps <= v1:
+            return t0 + (t1 - t0) * (speed_mps - v0) / (v1 - v0)
+    return points[-1][1]
+
+
 def carla_longitudinal(cmd_v: float, cmd_a: float, actual_v: float) -> tuple[float, float]:
     if cmd_v <= STOP_SPEED_MPS and cmd_a <= 0.0:
         return 0.0, 0.4
     speed_error = cmd_v - actual_v
-    # An explicit SI decel demand (<= -0.5 m/s^2) brakes even before the
-    # velocity error turns negative; the threshold keeps regulation chatter
-    # on throttle.
-    if speed_error < -0.4 or cmd_a <= -0.5 or (cmd_a < 0.0 and speed_error < 0.0):
+    # Brake on an explicit SI decel demand (<= -0.5 m/s^2) or a clear
+    # overspeed. Where a throttle can hold the speed, smaller errors are
+    # regulated on the throttle alone; above HOLD_OPEN_LOOP_MAX_MPS a slight
+    # overspeed with a negative demand is also braked, since no throttle holds
+    # the car there.
+    holdable = cmd_v <= HOLD_OPEN_LOOP_MAX_MPS
+    if (speed_error < -0.4 or cmd_a <= -0.5 or
+            (not holdable and cmd_a < 0.0 and speed_error < 0.0)):
         return 0.0, min(1.0, max(-cmd_a * BRAKE_DECEL_GAIN, -speed_error * 0.5))
     throttle = (
-        CRUISE_THROTTLE_PER_MPS * max(cmd_v, 0.0)
+        hold_throttle(max(cmd_v, 0.0))
         + SPEED_P_GAIN * speed_error
         + ACCEL_THROTTLE_GAIN * max(cmd_a, 0.0)
     )
