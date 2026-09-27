@@ -44,6 +44,27 @@ A/B on 2026-09-26 (RTX 5080 rig, fresh worlds, same wrappers):
 The stop gate was re-measured on `65b6875` (`e2e2-stop-gate.md`). Evidence is
 in the owner's archive `~/openadkit-e2e-evidence-20260926/si-validate/`.
 
+## Native VP ingress (SI `e88f78f`, 2026-09-27)
+
+Since `e88f78f` the SI reads VisionPilot's `DrivingReference` directly and the
+replay/restart probes inject and watch that topic (no adapter). Fresh worlds,
+RTX 5060 Ti rig:
+
+- **Replay:** one reference re-sent with cycle 37 behind the approved one
+  latched `SI_STOP latched: vp driving reference regression or invalid stamp
+  (fault_id 1)`; 0 NORMAL while latched although 20 valid references
+  followed; one explicit re-enable gave 3 NORMAL on the same VP session; no
+  mode/source change.
+- **Restart:** the recreated VP session was approved only after an explicit
+  re-enable; `old_approved_after_new 0`, `unrequested_resume 0`,
+  `bad_selection 0`.
+- **Driving is unchanged:** 150 s at 9 m/s on spawn 184 drove 1362 m with the
+  adapter and 1363 m without it, no contact, no latch, first lane-split
+  excursion at 632 m in both. The SI ignored 21 of 1602 references for want
+  of a same-frame ego sample (the domain bridge drops a few odometry samples;
+  the adapter read odometry on domain 1 and had none); the follower keeps the
+  previous trajectory for that cycle.
+
 ## VP restart (new producer session, same SI process)
 
 `deploy/tools/run-clean-vp-restart.sh` started a fresh VP→SI_CONTROL world,

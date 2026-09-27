@@ -13,6 +13,7 @@ VisionPilot and the SI talk natively: the SI reads VisionPilot's own
 | --- | --- | --- |
 | SI ingress + 500 ms applied-stop gate (all three modes) | Done — gates 6–14 ms | [`docs/e2e2-stop-gate.md`](docs/e2e2-stop-gate.md) |
 | SI latch / re-enable / VP restart identity checks | Done | [`docs/si-ingress-faults.md`](docs/si-ingress-faults.md) |
+| Native VP ↔ SI (no adapter) | Done — gates 7–12 ms, driving unchanged | [`docs/si-ingress-faults.md`](docs/si-ingress-faults.md) |
 | VP input stalls | Fixed (host socket buffers) | findings 005, 012 |
 | VP phantom braking (−7.5 m/s²) | Fixed (fork) | finding 011 |
 | VP lane keeping at 9 m/s | Fixed weave (fork + confs); ~1.1 km runs, no contact | finding 013 |

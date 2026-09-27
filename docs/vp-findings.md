@@ -671,6 +671,12 @@ creep into contact; stationary-lead hold → speed sawtooth and a low-speed
 swerve into the guardrail; hold never released when a lead was lost at 9.5 m).
 They would mask a perception limit rather than fix it.
 
+A slow lead is hit the same way once the closing speed is high: on the
+2026-09-27 RTX 5060 Ti rig the ego launched at t ≈ 20 s (slower start-up), the
+4.09 m/s lead was 113 m ahead, the car reached 14.6 m/s and touched it at
+t = 42 s (`20260927T093451Z-N-slowlead`, default conf, native ingress; the
+ingress does not change VP's speed schedule).
+
 Status: **open, VP-side.** Pin unchanged. 1 is a plain code bug (draft-PR
 candidate); 2 and 3 are fusion-design issues to raise upstream with this data;
 4 is a model/geometry limit to report upstream (issue). Rig tooling added for

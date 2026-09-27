@@ -104,6 +104,21 @@ The same three fresh-world gates after the re-enable fix
 | VP_CONTROL (stop visionpilot) | 10.72 m/s | 1.100 s | 1 ms | **11 ms** |
 | SI_CONTROL + Autoware (`BOTH_SOURCES=1`, stop autoware-planning) | 3.95 m/s | 1.020 s | 1 ms | **8 ms** |
 
+## Revalidation — native VP ingress, SI `e88f78f` (SHA-256 `ea6b2a26…`)
+
+The SI reads VisionPilot's `DrivingReference` itself; the adapter container is
+gone and the SI_CONTROL + VP gate now cuts VisionPilot. 2026-09-27, RTX 5060 Ti
+rig, fresh worlds (`~/openadkit-e2e-evidence-20260927/vps-records/native/`):
+
+| Configuration | Preflight speed | SI source watchdog | transport | **applied gate** |
+| --- | --- | --- | --- | --- |
+| SI_CONTROL + VP reference (`BOTH_SOURCES=1`, stop visionpilot) | 10.41 m/s | 1.150 s | 3 ms | **11 ms** |
+| VP_CONTROL (stop visionpilot) | 11.15 m/s | 1.130 s | 3 ms | **12 ms** |
+| SI_CONTROL + Autoware (`BOTH_SOURCES=1`, stop autoware-planning) | 4.41 m/s | 1.090 s | 2 ms | **7 ms** |
+
+Both-source isolation passed before and after the cut in both SI_CONTROL
+worlds, and VP_CONTROL passed VP's command through verbatim.
+
 ## Concurrent-publisher isolation
 
 Both final SI_CONTROL worlds ran **both** planners at once
