@@ -80,8 +80,8 @@ on upstream `main` `d4d9be13` and built with the Dockerfile builder stage:
 | #430 | `pr/build-and-log` | ENABLE_RADAR default + line-buffered stdout (012) |
 
 Not PRs: `fix/vp-ad-dist-needs-flag` and `fix/vp-long-fusion-config` (015) go
-into the stopped-lead issue as measured proposals. Issues for 015 and 016 are
-still to be written. Upstream CI: DCO and spell-check fail on merged PRs too;
+into the stopped-lead issue as measured proposals. Issues: #431 (015,
+stopped lead) and #432 (016, lane splits/ramps/junction, incl. 013's offset). Upstream CI: DCO and spell-check fail on merged PRs too;
 `semantic-pull-request` needs a lowercase subject, and PRs opened together
 cancel each other's run (shared concurrency group); a body edit re-triggers it.
 If anything merges, re-pin and re-validate.
