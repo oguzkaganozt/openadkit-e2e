@@ -3,7 +3,8 @@
 #
 # Preconditions: a rig run is already driving (run-loop.sh with RIG_MODE=vp
 # SI_MODE=si) and the actuator log shows applied controls. This injects a
-# candidate-source outage by stopping the source container, then parses:
+# selected-source outage by stopping the source container (default: VP),
+# then parses:
 #
 #   - the SI latch line in the si container log (its own HH:MM:SS.mmm wall
 #     clock) = SI fault detection;
@@ -22,7 +23,7 @@ set -euo pipefail
 SI_CONTAINER="${SI_CONTAINER:-openadkit-e2e-si}"
 ACTUATOR_CONTAINER="${ACTUATOR_CONTAINER:-openadkit-e2e-carla-actuator}"
 SCENARIO_CONTAINER="${SCENARIO_CONTAINER:-openadkit-e2e-scenario}"
-SOURCE_CONTAINER="${SOURCE_CONTAINER:-openadkit-e2e-adapter}"
+SOURCE_CONTAINER="${SOURCE_CONTAINER:-openadkit-e2e-visionpilot}"
 WAIT_SEC="${WAIT_SEC:-20}"
 PREFLIGHT_SEC="${PREFLIGHT_SEC:-10}"
 MIN_SPEED_MPS="${MIN_SPEED_MPS:-1.0}"

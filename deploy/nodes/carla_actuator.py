@@ -18,7 +18,7 @@ last applied control and the rig offers no stop guarantee. The 500 ms gate
 (fault detection -> CARLA-applied stop) is instrumented with wall-clock GATE
 lines for the measurement script (deploy/tools/stop-gate-test.sh).
 
-Runs on the SI DDS domain in the adapter image (carries safety_island_msgs):
+Runs on the SI DDS domain in the ROS tools image (`openadkit-e2e-adapter`, carries safety_island_msgs):
 
     ROS_DOMAIN_ID=2 python3 /opt/nodes/carla_actuator.py
 """

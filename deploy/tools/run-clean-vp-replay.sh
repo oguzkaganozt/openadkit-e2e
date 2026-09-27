@@ -33,14 +33,14 @@ for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
       result=0
     fi
   fi
-  for name in si adapter visionpilot carla-actuator scenario bridge; do
+  for name in si visionpilot carla-actuator scenario bridge; do
     docker logs "openadkit-e2e-$name" >"$out/$name.log" 2>&1 || true
   done
   sha256sum "$ROOT/upstream/autoware-safety-island/build/freertos-posix/actuation_freertos" \
     >"$out/si-binary.sha256"
   cat "$out/replay.log" 2>/dev/null || cat "$out/run-loop.log" >&2
   if ((result == 0)) && \
-    grep -qa 'SI_STOP latched: vp trajectory candidate regression' "$out/si.log" && \
+    grep -qa 'SI_STOP latched: vp driving reference regression' "$out/si.log" && \
     grep -qa 'GATE STOP_APPLIED' "$out/carla-actuator.log"; then
     echo "VP_REPLAY_PASS attempt=$attempt evidence=$out"
     exit 0

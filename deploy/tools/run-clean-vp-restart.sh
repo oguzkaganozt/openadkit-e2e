@@ -43,7 +43,7 @@ for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
       result=0
     fi
   fi
-  for name in si adapter visionpilot carla-actuator scenario bridge; do
+  for name in si visionpilot carla-actuator scenario bridge; do
     docker logs "openadkit-e2e-$name" >"$out/$name.log" 2>&1 || true
   done
   sha256sum "$ROOT/upstream/autoware-safety-island/build/freertos-posix/actuation_freertos" \

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Align VP stage timing with adapter output gaps (findings 005/012).
+"""Align VP stage timing with output-cycle gaps (findings 005/012).
 
 Needs a VP build with the fork's `diag/vp-stage-timing` branch for the
-`[Timing]` / `[Watchdog]` lines (without it only the adapter gaps are shown).
+`[Timing]` / `[Watchdog]` lines (without it only the output gaps are shown).
 A gap whose VP time sits in `wait` is input starvation (no camera frame), not
 VP work.
 
@@ -53,9 +53,15 @@ def main():
     for ts, text in watchdog[:30]:
         print(f"  {ts:.3f} {text}")
 
-    xfers = [docker_ts(l) for l in open(f"{run}/adapter.log", errors="replace") if "xfer #" in l]
+    # Runs before the native SI ingress logged each transfer in adapter.log;
+    # newer runs have no adapter, so VP's own plan lines mark each cycle.
+    try:
+        xfers = [docker_ts(l) for l in open(f"{run}/adapter.log", errors="replace") if "xfer #" in l]
+    except FileNotFoundError:
+        xfers = [docker_ts(l) for l in open(f"{run}/visionpilot.log", errors="replace")
+                 if "plan: tyre=" in l]
     gaps = [(b - a, a) for a, b in zip(xfers, xfers[1:]) if b - a > 0.5]
-    print(f"adapter xfers={len(xfers)} gaps>0.5s={len(gaps)} "
+    print(f"cycles out={len(xfers)} gaps>0.5s={len(gaps)} "
           f"max={max((g for g, _ in gaps), default=0):.2f}")
     for gap, start in gaps[:30]:
         print(f"  gap {gap:.2f}s starting {start:.3f}")

@@ -10,7 +10,6 @@ find_package(rosidl_default_generators REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/ApprovedRequest.msg"
-  "msg/TrajectoryCandidate.msg"
   DEPENDENCIES builtin_interfaces autoware_control_msgs autoware_planning_msgs
 )
 

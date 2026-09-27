@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Synthetic VP reference for adapter/SI testing without VisionPilot.
+"""Synthetic VP reference for SI testing without VisionPilot.
 
 Publishes a straight-ahead DrivingReference stamped with the latest CARLA
-ego stamp from /localization/kinematic_state, so the adapter's exact
-same-frame match succeeds. Run it in the adapter image (which carries
+ego stamp from /localization/kinematic_state, so the SI's exact
+same-frame match succeeds. Run it in the ROS tools image (which carries
 visionpilot_msgs) with ROS_DOMAIN_ID=1:
 
     python3 deploy/nodes/fake_reference.py

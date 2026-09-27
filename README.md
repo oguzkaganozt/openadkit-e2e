@@ -3,8 +3,9 @@
 An Open AD Kit closed-loop rig for L2 simulation: **VisionPilot or Autoware
 plans, the Autoware Safety Island decides, CARLA 0.9.16 simulates, and
 exactly one process actuates.** Everything runs with Docker Compose; this repo
-holds the deployment, configuration, the VisionPilot-to-SI adapter, and the
-evidence.
+holds the deployment, configuration, CARLA-side nodes and the evidence.
+VisionPilot and the SI talk natively: the SI reads VisionPilot's own
+`DrivingReference` / `DrivingCommand`, with no adapter in between.
 
 ## Status
 
@@ -27,9 +28,7 @@ flowchart LR
     CARLA["CARLA 0.9.16"] -->|RPC| Bridge["carla-bridge<br/>telemetry only"]
     Scenario["scenario<br/>ego, NPCs, sim ticks"] --> CARLA
     Bridge -->|camera| VP["VisionPilot<br/>ROS 2 Jazzy"]
-    VP -->|DrivingReference| Adapter["adapter"]
-    VP -->|DrivingCommand| DB
-    Adapter -->|TrajectoryCandidate| DB["domain-bridge<br/>1 → 2 only"]
+    VP -->|DrivingReference, DrivingCommand| DB["domain-bridge<br/>1 → 2 only"]
     AW["Autoware planning<br/>(autoware profile)"] -->|Trajectory| DB
     Bridge -->|odometry, accel, steering| DB
     DB --> SI["Safety Island<br/>FreeRTOS POSIX"]
@@ -37,7 +36,7 @@ flowchart LR
     Act -->|VehicleControl| CARLA
 ```
 
-- **Domains:** CARLA telemetry, VisionPilot, the adapter and Autoware use DDS
+- **Domains:** CARLA telemetry, VisionPilot and Autoware use DDS
   domain 1; the SI and the actuator use domain 2. The domain bridge carries
   only the inputs listed in
   [`deploy/config/bridge-config.yaml`](deploy/config/bridge-config.yaml); no
@@ -49,14 +48,15 @@ flowchart LR
   run time; there is no fallback to the unselected planner.
 - **Stops are SI-owned:** a stale or invalid selected source latches SI_STOP;
   clearing it needs an explicit `/control/safety_island/reenable` (`std_msgs/Bool`,
-  domain 2) while every source is fresh. The adapter never authors a stop.
+  domain 2) while every source is fresh. An unusable VP reference is ignored,
+  never turned into a stop.
 - **Actuation:** `carla-actuator` is the only caller of `apply_control()`. It
   applies the SI's decision each loop and realises the approved tire angle
   through the car's speed-dependent steering curve.
 
 | `RIG_MODE` | `SI_MODE` | Who plans | Who follows |
 | --- | --- | --- | --- |
-| `vp` (default) | `si` (default) | VisionPilot lane path → adapter candidate | SI follower |
+| `vp` (default) | `si` (default) | VisionPilot lane path + speed schedule (`DrivingReference`), placed by the SI | SI follower |
 | `vp` | `vp` | VisionPilot command (steer, speed, accel) | VisionPilot, SI-checked |
 | `autoware` | `si` | Autoware native trajectory (empty-scene fixture) | SI follower |
 
@@ -126,8 +126,7 @@ History: [`docs/vp-si-integration-plan.md`](docs/vp-si-integration-plan.md)
 | Path | Contents |
 | --- | --- |
 | [`deploy/`](deploy/README.md) | Setup, build, Compose services, configs, rig nodes and measurement tools |
-| [`adapter/`](adapter/path_to_trajectory.py) | VP `DrivingReference` → SI `TrajectoryCandidate` (with the only unit tests) |
-| [`safety_island_msgs/`](safety_island_msgs/msg) | `TrajectoryCandidate`, `ApprovedRequest` |
+| [`safety_island_msgs/`](safety_island_msgs/msg) | `ApprovedRequest` (the SI output the actuator consumes) |
 | [`docs/`](docs/) | Contract, fault evidence, VP findings, example clips |
 | [`upstream/vision_pilot`](https://github.com/oguzkaganozt/autoware_vision_pilot/tree/rig/vp-e2e-demo) | VisionPilot fork, pinned on `rig/vp-e2e-demo` |
 | [`upstream/autoware-safety-island`](https://github.com/autowarefoundation/autoware-safety-island/tree/feat/si-supervisor-v0-1) | Safety Island, pinned on `feat/si-supervisor-v0-1` |

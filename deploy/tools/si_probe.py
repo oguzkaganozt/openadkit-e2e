@@ -14,12 +14,12 @@ actuator-facing SI output) and reports per window and at exit:
 - the proposed control payload extrema (velocity / acceleration) as a
   behavior crosscheck alongside the CARLA ground truth.
 
-Run in the adapter image (carries safety_island_msgs) on the SI domain:
+Run in the ROS tools image (carries safety_island_msgs) on the SI domain:
 
   ROS_DOMAIN_ID=2 RMW_IMPLEMENTATION=rmw_cyclonedds_cpp \\
-  docker run --rm --network host --ipc host ... adapter_probe-style command
+  docker run --rm --network host --ipc host ... probe command
 
-See deploy/tools/adapter-fault-test.sh for the fault-injection wrapper.
+See deploy/tools/stop-gate-test.sh for source-cut fault injection.
 """
 import json
 import os

@@ -119,7 +119,7 @@ for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
   else
     result=1
   fi
-  for name in si adapter visionpilot autoware-planning carla-actuator \
+  for name in si visionpilot autoware-planning carla-actuator \
               carla-bridge scenario bridge; do
     docker logs "openadkit-e2e-$name" >"$out/$name.log" 2>&1 || true
   done

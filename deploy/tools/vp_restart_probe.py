@@ -14,7 +14,8 @@ import time
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
-from safety_island_msgs.msg import ApprovedRequest, TrajectoryCandidate
+from safety_island_msgs.msg import ApprovedRequest
+from visionpilot_msgs.msg import DrivingReference
 from std_msgs.msg import Bool
 
 
@@ -37,7 +38,7 @@ class RestartProbe(Node):
         self.reenable_sent = False
         self.reenable = self.create_publisher(Bool, "/control/safety_island/reenable", qos)
         self.create_subscription(
-            TrajectoryCandidate, "/planning/visionpilot/trajectory_candidate",
+            DrivingReference, "/vehicle/driving_reference",
             self.on_candidate, qos
         )
         self.create_subscription(
@@ -45,7 +46,7 @@ class RestartProbe(Node):
         )
 
     def on_candidate(self, msg):
-        session = int(msg.source_session)
+        session = int(msg.session)
         self.candidate_sessions[session] = self.candidate_sessions.get(session, 0) + 1
         if self.old_session is not None and session != self.old_session and \
                 self.candidate_sessions[session] >= 3 and self.stop_count and \

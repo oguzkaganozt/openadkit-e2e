@@ -233,10 +233,8 @@ if [[ "$RIG_MODE" == "autoware" || "$BOTH_SOURCES" == 1 ]]; then
   fi
 fi
 if [[ "$RIG_MODE" == "vp" || "$BOTH_SOURCES" == 1 ]]; then
-  "${COMPOSE[@]}" up -d --no-deps --force-recreate adapter visionpilot
+  "${COMPOSE[@]}" up -d --no-deps --force-recreate visionpilot
   started_at="$(date --iso-8601=seconds)"
-  wait_for_log openadkit-e2e-adapter "vehicle/driving_reference + /localization/kinematic_state" "adapter subscribed"
-  wait_for_log openadkit-e2e-adapter "xfer #" "VP reference + adapter TrajectoryCandidate"
   wait_for_log openadkit-e2e-visionpilot "plan: tyre=" "VP planning"
 fi
 started_at="$(date --iso-8601=seconds)"

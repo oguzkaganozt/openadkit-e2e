@@ -27,8 +27,9 @@ The build initializes the pinned submodules, downloads and verifies the CARLA
 0.9.16 wheel into `/tmp/` and `/tmp/carla-venv`, builds `visionpilot:gpu-ros2`
 from the fork pin, builds the SI binary
 (`upstream/autoware-safety-island/build/freertos-posix/actuation_freertos`),
-the adapter and domain-bridge images (the adapter's base is the Autoware
-runtime image), and pulls CARLA. Add `--run` to start a loop afterwards.
+the ROS tools image (`openadkit-e2e-adapter`, historical name: the Autoware
+runtime plus `visionpilot_msgs` and `safety_island_msgs`; base of the actuator,
+probes and domain bridge) and the domain-bridge image, and pulls CARLA. Add `--run` to start a loop afterwards.
 
 ## Run
 
@@ -96,7 +97,7 @@ All in `deploy/tools/`; each script's header documents its gate or output.
 | `record-example.sh`, `package-example.sh` | Example clips for `docs/media/` |
 | `image_stream_observer.py`, `measure-cadence.sh` | Camera-stream and VP cadence gaps |
 | `analysis/lane_metrics.py`, `analysis/curve_offset.py` | Lane keeping, collisions, filter lag and curve offset per run directory (013) |
-| `analysis/cipo_episodes.py`, `analysis/cadence_stalls.py` | CIPO episodes from VP logs (011); VP stage timing vs adapter gaps (012) |
+| `analysis/cipo_episodes.py`, `analysis/cadence_stalls.py` | CIPO episodes from VP logs (011); VP stage timing vs output-cycle gaps (012) |
 
 Run the CARLA-side probes with `/tmp/carla-venv/bin/python`, **after**
 `run-loop.sh` returns: it recreates CARLA, and an earlier client never sees the
@@ -147,7 +148,6 @@ VISIONPILOT_CONF=vision_pilot.cpu.conf CARLA_RUNTIME=nvidia ./deploy/run-loop.sh
 | `operation-mode` | all | `AUTONOMOUS` operation-mode stub for the SI |
 | `si` | all | The SI binary; `SI_SUPERVISION_MODE` / `SI_TRAJECTORY_SOURCE` from `SI_MODE` / `RIG_MODE`, read once, fail closed |
 | `visionpilot` | vp | VP (Jazzy, FastDDS): `/vehicle/driving_command`, `/vehicle/driving_reference` |
-| `adapter` | vp | Accepts a valid `DrivingReference` whose `source_stamp` matches an ego sample, publishes a ≤ 1300 B `TrajectoryCandidate`; rejects (never stops) otherwise |
 | `autoware-planning`, `odom-to-tf`, `empty-scene` | autoware | Autoware planning-only launch on Town04 with the empty-scene fixture |
 
 ### Safety Island interfaces
@@ -156,7 +156,7 @@ Inputs, bridged from domain 1 to domain 2:
 
 | Topic | Type | Source |
 | --- | --- | --- |
-| `/planning/visionpilot/trajectory_candidate` | `safety_island_msgs/msg/TrajectoryCandidate` | Adapter (SI_CONTROL, `RIG_MODE=vp`) |
+| `/vehicle/driving_reference` | `visionpilot_msgs/msg/DrivingReference` | VisionPilot (SI_CONTROL, `RIG_MODE=vp`); the SI places the path with the same-frame ego pose |
 | `/planning/scenario_planning/trajectory` | `autoware_planning_msgs/msg/Trajectory` | Autoware (SI_CONTROL, `RIG_MODE=autoware`) |
 | `/vehicle/driving_command` | `visionpilot_msgs/msg/DrivingCommand` | VisionPilot (VP_CONTROL) |
 | `/localization/kinematic_state` | `nav_msgs/msg/Odometry` | CARLA bridge |
@@ -174,15 +174,17 @@ on weak-multicast networks topic discovery can be slow or flaky.
 
 ## Development
 
-Adapter tests, no ROS needed:
+SI host tests (VP reference conversion, latch, candidate identity) run in the
+SI's `--unit-test` build:
 
 ```bash
-python3 -m unittest discover -s adapter -v
+cd upstream/autoware-safety-island
+./build.sh --platform freertos-posix -d build/check-unit --control-output DDS_ONLY --dds-interface lo --unit-test
 ```
 
-Synthetic VP reference without VisionPilot: in the adapter image with
+Synthetic VP reference without VisionPilot: in the ROS tools image with
 `ROS_DOMAIN_ID=1`, run `python3 deploy/nodes/fake_reference.py` (it stamps
-each reference with the latest ego frame so the adapter accepts it).
+each reference with the latest ego frame so the SI accepts it).
 
 Rebuild the Safety Island directly in its build environment (what `build.sh`
 runs):

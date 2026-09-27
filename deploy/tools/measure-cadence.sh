@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # VPS cadence measurement for SI #62: CARLA + bridge + VisionPilot only.
-# No SI/adapter/domain-bridge: this measures healthy publication cadence and
+# No SI/domain-bridge: this measures healthy publication cadence and
 # source stamps of the CARLA bridge and VP outputs on ROS domain 1.
 #
 # SKIP_STACK=1 probes an already running stack without touching containers.

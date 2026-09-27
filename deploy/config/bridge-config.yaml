@@ -12,8 +12,8 @@ topics:
     type: autoware_planning_msgs/msg/Trajectory
     from_domain: 1
     to_domain: 2
-  planning/visionpilot/trajectory_candidate:
-    type: safety_island_msgs/msg/TrajectoryCandidate
+  vehicle/driving_reference:
+    type: visionpilot_msgs/msg/DrivingReference
     from_domain: 1
     to_domain: 2
   system/operation_mode/state:

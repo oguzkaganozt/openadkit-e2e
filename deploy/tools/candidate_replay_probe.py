@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Inject a deliberately reordered VP trajectory into the selected SI ingress.
+"""Inject a deliberately reordered VP DrivingReference into the SI ingress.
 
-Run in a *fresh* VP→SI_CONTROL world. Both VP and adapter keep publishing;
-one old cycle on the same source session must latch SI_STOP immediately, and
-the later valid candidates must not clear the latch without operator re-enable.
+Run in a *fresh* VP→SI_CONTROL world. VP keeps publishing; one old cycle on
+the same VP session must latch SI_STOP immediately, and the later valid
+references must not clear the latch without operator re-enable.
 """
 
 import json
@@ -12,8 +12,9 @@ import time
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
-from safety_island_msgs.msg import ApprovedRequest, TrajectoryCandidate
+from safety_island_msgs.msg import ApprovedRequest
 from std_msgs.msg import Bool
+from visionpilot_msgs.msg import DrivingReference
 
 
 class ReplayProbe(Node):
@@ -25,13 +26,13 @@ class ReplayProbe(Node):
             durability=DurabilityPolicy.VOLATILE,
         )
         self.publisher = self.create_publisher(
-            TrajectoryCandidate, "/planning/visionpilot/trajectory_candidate", qos
+            DrivingReference, "/vehicle/driving_reference", qos
         )
         self.reenable_publisher = self.create_publisher(
             Bool, "/control/safety_island/reenable", qos
         )
         self.create_subscription(
-            TrajectoryCandidate, "/planning/visionpilot/trajectory_candidate",
+            DrivingReference, "/vehicle/driving_reference",
             self.on_candidate, qos
         )
         self.create_subscription(
@@ -55,7 +56,7 @@ class ReplayProbe(Node):
 
     def on_candidate(self, msg):
         if self.sent_at is not None and self.stops and (
-            int(msg.source_session), int(msg.source_cycle)
+            int(msg.session), int(msg.cycle)
         ) != tuple(self.sent_id):
             self.candidates_after_stop += 1
         self.latest = msg
@@ -86,17 +87,17 @@ class ReplayProbe(Node):
                 now - self.latest_at > 0.25:
             return False
         session, cycle = self.last_normal
-        if int(msg.source_session) != session:
+        if int(msg.session) != session:
             return False
         # Reorder within *the same session*: a newer camera frame cannot
         # legitimize a lower VP cycle, and the chosen cycle is clearly behind
         # the last one SI approved (no accept/reject race). Never mutate the
         # selected source's normal publisher or the Autoware trajectory topic.
-        stale_cycle = min(cycle, int(msg.source_cycle)) - 5
+        stale_cycle = min(cycle, int(msg.cycle)) - 5
         if stale_cycle < 1:
             return False
-        msg.source_cycle = stale_cycle
-        self.sent_id = [int(msg.source_session), int(msg.source_cycle)]
+        msg.cycle = stale_cycle
+        self.sent_id = [int(msg.session), int(msg.cycle)]
         self.sent_at = time.monotonic()
         self.publisher.publish(msg)
         return True
@@ -110,7 +111,7 @@ def main():
         while time.monotonic() < deadline and not node.inject():
             rclpy.spin_once(node, timeout_sec=0.05)
         if node.sent_at is None:
-            raise SystemExit("FAIL: no matching live VP candidate and NORMAL selection")
+            raise SystemExit("FAIL: no matching live VP reference and NORMAL selection")
         deadline = time.monotonic() + 2
         while time.monotonic() < deadline:
             rclpy.spin_once(node, timeout_sec=0.05)
@@ -123,8 +124,8 @@ def main():
         }
         print(json.dumps(result), flush=True)
         if not node.stops or node.normal_after_stop or not node.candidates_after_stop or node.source_changed:
-            raise SystemExit("FAIL: reordered VP candidate did not latch the selected SI source")
-        print("VP candidate regression and persistent latch PASS", flush=True)
+            raise SystemExit("FAIL: reordered VP reference did not latch the selected SI source")
+        print("VP reference regression and persistent latch PASS", flush=True)
         node.reenable_sent = True
         node.reenable_publisher.publish(Bool(data=True))
         deadline = time.monotonic() + 5

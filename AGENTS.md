@@ -13,10 +13,11 @@ evidence live in `docs/e2e2-stop-gate.md` (ingress + stop gate),
 ./deploy/setup.sh                                 # once per host
 ./deploy/build.sh --dds-interface <nic> [--cpu|--gpu] [--run]
 ./deploy/run-loop.sh --gpu                        # one fresh-world attempt
-python3 -m unittest discover -s adapter -v        # the only runnable test suite
 ```
 
-- Test sources exist only in `adapter/`.
+- Tests are the SI host tests (`vp_reference_test`, `supervision_latch_test`,
+  `candidate_selection_test`, ...), built and run by the SI's `--unit-test`
+  build in its devcontainer (`deploy/README.md`, Development).
 - Stop-gate measurement on a driving rig: `deploy/tools/stop-gate-test.sh`
   (see its header for the gate definition). Fresh-world evidence wrappers:
   `deploy/tools/run-clean-gate.sh`, `run-clean-vp-{replay,restart}.sh`.
@@ -49,12 +50,17 @@ python3 -m unittest discover -s adapter -v        # the only runnable test suite
   never actuate.
 - One SI binary reads `SI_SUPERVISION_MODE`/`SI_TRAJECTORY_SOURCE` once at
   startup and fails closed on bad values. Do not add runtime fallback,
-  mode switching, or an adapter-authored stop; freshness and stops are SI-owned.
-- Domains: VP and the adapter on 1, SI and the actuator on 2.
+  mode switching, or a stop authored outside the SI; freshness and stops are
+  SI-owned.
+- VP and the SI talk natively, with no adapter: in SI_CONTROL + VP the SI reads
+  VP's `DrivingReference` and places the path with the same-frame ego pose
+  (`vp_reference.hpp`); in VP_CONTROL it checks VP's `DrivingCommand`. VP does
+  not know the mode.
+- Domains: VP, Autoware and the CARLA bridge on 1, SI and the actuator on 2.
   `deploy/config/bridge-config.yaml` is the complete list of bridged inputs
   (no control topic is bridged back).
-- VP is ROS Jazzy/FastDDS; the adapter is Humble/CycloneDDS. Keep VP on
-  FastDDS — unifying RMW fails on string deserialization.
+- VP is ROS Jazzy/FastDDS; the rig's ROS tools (actuator, domain bridge,
+  probes) are Humble/CycloneDDS. Keep VP on FastDDS — unifying RMW fails on string deserialization.
 - The 7.4 MB camera frames reach VP over cross-vendor UDP. With stock 212 KB
   socket buffers VP starves for up to seconds and the SI latches (finding
   012). `setup.sh` raises the limits and `run-loop.sh` refuses to run below

@@ -40,7 +40,7 @@ probe=$!
 sampler=$!
 wait "$sampler" "$probe"
 
-for c in visionpilot scenario si carla-actuator adapter carla-bridge carla; do
+for c in visionpilot scenario si carla-actuator carla-bridge carla; do
   docker logs -t "openadkit-e2e-$c" >"$out/$c.log" 2>&1
 done
 echo "$out"

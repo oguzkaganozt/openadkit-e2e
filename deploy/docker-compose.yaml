@@ -1,4 +1,4 @@
-# VP plans → adapter → SI follows → CARLA.
+# VP plans → SI follows (or checks VP's command) → carla-actuator → CARLA.
 # VP steering_cmd is not wired to CARLA.
 #
 #   ./run-loop.sh
@@ -10,7 +10,7 @@
 # re-listen) across another client's wipe leaves the 0.9.16 server
 # pumping requests for dead streams until its RPC starves (observed
 # 2026-09-25, twice).
-# Keep a full run's evidence: verbose nodes (adapter xfer, SI 30 Hz)
+# Keep a full run's evidence: verbose nodes (VP plan lines, SI 30 Hz)
 # otherwise rotate away mid-campaign. ~10x a night run per service.
 x-logging: &run-logging
   logging:
@@ -38,25 +38,6 @@ services:
       bash CarlaUE4.sh -nosound
       -RenderOffScreen
       -carla-rpc-port=2000
-    restart: "no"
-
-  adapter:
-    profiles: ["vp"]
-    image: ${ADAPTER_IMAGE:-openadkit-e2e-adapter:latest}
-    container_name: openadkit-e2e-adapter
-    <<: *run-logging
-    network_mode: host
-    ipc: host
-    env_file:
-      - config.env
-    volumes:
-      - ../adapter:/opt/adapter:ro
-      - ./config/cyclonedds.xml:/autoware/cyclonedds.xml:ro
-    working_dir: /opt/adapter
-    command: >
-      bash -lc "source /opt/ros/$${ROS_DISTRO}/setup.bash &&
-      source /opt/autoware/setup.bash &&
-      python3 /opt/adapter/path_to_trajectory.py"
     restart: "no"
 
   operation-mode:

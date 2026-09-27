@@ -14,7 +14,8 @@ import rclpy
 from autoware_planning_msgs.msg import Trajectory
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
-from safety_island_msgs.msg import ApprovedRequest, TrajectoryCandidate
+from safety_island_msgs.msg import ApprovedRequest
+from visionpilot_msgs.msg import DrivingReference
 
 
 class IsolationProbe(Node):
@@ -35,7 +36,7 @@ class IsolationProbe(Node):
         self.stop_ids = set()
         self.unexpected_modes = 0
         self.create_subscription(
-            TrajectoryCandidate, "/planning/visionpilot/trajectory_candidate",
+            DrivingReference, "/vehicle/driving_reference",
             self.on_vp, qos
         )
         self.create_subscription(
@@ -48,7 +49,7 @@ class IsolationProbe(Node):
 
     def on_vp(self, msg):
         self.vp += 1
-        self.vp_ids.add((int(msg.source_session), int(msg.source_cycle)))
+        self.vp_ids.add((int(msg.session), int(msg.cycle)))
 
     def on_autoware(self, msg):
         self.autoware += 1
