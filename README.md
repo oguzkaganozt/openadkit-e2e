@@ -1,125 +1,97 @@
 # openadkit-e2e
 
-An Open AD Kit closed-loop rig for L2 simulation: **VisionPilot or Autoware
-plans, the Autoware Safety Island decides, CARLA 0.9.16 simulates, and
-exactly one process actuates.** Everything runs with Docker Compose; this repo
-holds the deployment, configuration, CARLA-side nodes and the evidence.
-VisionPilot and the SI talk natively: the SI reads VisionPilot's own
-`DrivingReference` / `DrivingCommand`, with no adapter in between.
+![openadkit-e2e closed loop](docs/closed-loop.svg)
 
-## Status
-
-| Area | State | Evidence |
-| --- | --- | --- |
-| SI ingress + 500 ms applied-stop gate (all three modes) | Done — gates 6–14 ms | [`docs/e2e2-stop-gate.md`](docs/e2e2-stop-gate.md) |
-| SI latch / re-enable / VP restart identity checks | Done | [`docs/si-ingress-faults.md`](docs/si-ingress-faults.md) |
-| Native VP ↔ SI (no adapter) | Done — gates 7–12 ms, driving unchanged | [`docs/si-ingress-faults.md`](docs/si-ingress-faults.md) |
-| VP input stalls | Fixed (host socket buffers) | findings 005, 012 |
-| VP phantom braking (−7.5 m/s²) | Fixed (fork) | finding 011 |
-| VP lane keeping at 9 m/s | Fixed weave (fork + confs); ~1.1 km runs, no contact | finding 013 |
-| VP curve offset, junctions/ramps | **Open** | finding 013, [`todo.md`](todo.md) |
-
-Findings: [`docs/vp-findings.md`](docs/vp-findings.md). Example clips:
-[`docs/media/`](docs/media/README.md).
+A closed-loop Open AD Kit rig in CARLA 0.9.16. **VisionPilot or Autoware
+plans, the Autoware Safety Island (SI) decides, and exactly one process
+drives the car.** Everything runs with Docker Compose.
 
 ## How it works
 
-![openadkit-e2e closed loop](docs/closed-loop.svg)
+- **Planners** (VisionPilot or Autoware) run on DDS domain 1. **The SI and the
+  actuator** run on domain 2. A one-way bridge carries the inputs listed in
+  [`bridge-config.yaml`](deploy/config/bridge-config.yaml); nothing goes back.
+- **VisionPilot and the SI talk directly.** The SI reads VisionPilot's own
+  `DrivingReference` (lane + speed plan) or `DrivingCommand` (steer, speed,
+  acceleration). No adapter sits in between.
+- **The SI picks its mode once at startup** and never switches or falls back.
+  A stale or invalid input latches a stop. Only an explicit re-enable clears
+  it.
+- **`carla-actuator` is the only process that drives the car.** It sends the
+  approved speed, acceleration and steering to CARLA's Ackermann controller;
+  stops are a fixed brake.
 
-- **Domains:** CARLA telemetry, VisionPilot and Autoware use DDS
-  domain 1; the SI and the actuator use domain 2. The domain bridge carries
-  only the inputs listed in
-  [`deploy/config/bridge-config.yaml`](deploy/config/bridge-config.yaml); no
-  control topic goes back.
-- **One SI binary, selected at startup:** `SI_MODE=si` (SI_CONTROL — the SI's
-  own follower tracks the selected trajectory) or `SI_MODE=vp` (VP_CONTROL —
-  the SI checks and passes VisionPilot's `DrivingCommand` through). The
-  trajectory source is `RIG_MODE=vp|autoware`. Mode and source never change at
-  run time; there is no fallback to the unselected planner.
-- **Stops are SI-owned:** a stale or invalid selected source latches SI_STOP;
-  clearing it needs an explicit `/control/safety_island/reenable` (`std_msgs/Bool`,
-  domain 2) while every source is fresh. An unusable VP reference is ignored,
-  never turned into a stop.
-- **Actuation:** `carla-actuator` is the only CARLA control writer. It hands
-  each approved speed, acceleration and tire angle to CARLA's Ackermann
-  controller (stops are a fixed brake) and realises the tire angle through the
-  car's speed-dependent steering curve.
-
-| `RIG_MODE` | `SI_MODE` | Who plans | Who follows |
+| `RIG_MODE` | `SI_MODE` | Who plans | Who drives |
 | --- | --- | --- | --- |
-| `vp` (default) | `si` (default) | VisionPilot lane path + speed schedule (`DrivingReference`), placed by the SI | SI follower |
-| `vp` | `vp` | VisionPilot command (steer, speed, accel) | VisionPilot, SI-checked |
-| `autoware` | `si` | Autoware native trajectory (empty-scene fixture) | SI follower |
+| `vp` (default) | `si` (default) | VisionPilot lane + speed plan | SI follower |
+| `vp` | `vp` | VisionPilot command | VisionPilot, checked by the SI |
+| `autoware` | `si` | Autoware trajectory (empty scene) | SI follower |
 
 ## Quick start
 
-Ubuntu x86-64 with a working NVIDIA driver, Git, curl and Python 3.10 with
-venv. From the repository root:
+You need Ubuntu x86-64 with an NVIDIA GPU and driver, Git, curl and Python 3.10.
 
 ```bash
-./deploy/setup.sh                        # Docker, NVIDIA runtime, DDS socket buffers
-# Log out and back in if setup asks you to.
-./deploy/tools/fetch-town04-map.sh       # only needed for the Autoware profile
-./deploy/build.sh --dds-interface ens3   # submodules, images, SI binary, CARLA venv
-./deploy/run-loop.sh --gpu               # one fresh-world VP → SI_CONTROL drive
+git clone https://github.com/oguzkaganozt/openadkit-e2e.git
+cd openadkit-e2e
+./deploy/setup.sh                        # Docker, NVIDIA runtime, socket buffers
+./deploy/tools/fetch-town04-map.sh       # only for the Autoware profile
+./deploy/build.sh --dds-interface ens3   # submodules, images, SI binary, CARLA client
+./deploy/run-loop.sh --gpu               # one fresh-world drive
 ```
 
-Replace `ens3` with a multicast-capable interface. Open the camera preview at
-<http://127.0.0.1:8090/> (a remote host prints its public link). Other modes
-and knobs are in the [deployment guide](deploy/README.md).
+Replace `ens3` with your network interface. The camera preview is at
+<http://127.0.0.1:8090/>. Other modes and settings are in the
+[deployment guide](deploy/README.md).
 
-`setup.sh` is not optional on a new host: VisionPilot receives 7.4 MB camera
-frames over UDP, and with the stock 212 KB socket buffers it starves and the
-SI latches (finding 012). `run-loop.sh` refuses to start without the larger
-limits.
+Don't skip `setup.sh`. VisionPilot gets large camera frames over UDP and
+starves with default socket buffers, so `run-loop.sh` refuses to start without
+the bigger limits.
+
+## Results
+
+| What | Result | Details |
+| --- | --- | --- |
+| SI stop: fault detected → brake applied in CARLA | 4–14 ms in all three modes (limit 500 ms) | [stop gate](docs/e2e2-stop-gate.md) |
+| Fault handling: replay, restart, re-enable | Pass | [ingress faults](docs/si-ingress-faults.md) |
+| Lane keeping on open road | ~2.5 km at 9 m/s without contact | [findings](docs/vp-findings.md) |
+| 4 m/s cruise | Steady (3.97–4.00 m/s) | [findings](docs/vp-findings.md) |
+
+Example clips for each mode: [`docs/media/`](docs/media/README.md).
 
 ## Known limitations
 
-- **VisionPilot lateral control (open).** At 9 m/s VP_CONTROL holds a steady
-  offset of ~110 m × curvature in curves (≤ 0.8 m on the Town04 spawn-184
-  route); the SI follower drives the same curves centred. At lane splits,
-  merges and ramps VP can drift across lanes. See finding 013 and
-  [`todo.md`](todo.md). The example clips run at 4 m/s.
-- **VisionPilot perception.** Close-range lead handling (findings 002/003) was
-  last checked with a rolling 4 m/s lead only; the stopped-lead case is not
-  re-validated on the current pin. The launch cold-start swerve (001) is not
-  fixed upstream.
-- **Autoware profile** uses an empty-scene planning fixture: no NPCs or lead
-  vehicle.
-- **No stop guarantee if the SI goes silent:** the actuator keeps the last
-  applied control (by design; see the stop-gate limits).
-- **CARLA needs an NVIDIA GPU.** UE 4.26 is Vulkan-only; software GL and
-  `-no-rendering` crash at startup. `--cpu` switches only VisionPilot
-  inference (~2.5 Hz on a 28-core x86-64 EPYC vs 10 Hz on GPU; ARM untested).
-  CARLA's native `--ros2` is not used (finding 004).
-- **Cross-distro, cross-RMW subscriptions.** VisionPilot (Jazzy, FastDDS)
-  talks to Humble/CycloneDDS nodes. It works here, but ROS guarantees neither;
-  unifying on CycloneDDS fails on string deserialization, so VP stays on
-  FastDDS.
+- **VisionPilot hits a stopped car at ~9 m/s.** It has no reliable distance
+  below ~8 m. Reported upstream:
+  [vision_pilot#431](https://github.com/autowarefoundation/vision_pilot/issues/431).
+- **VisionPilot fails at lane splits, ramps and the end of the highway**, and
+  drives slightly off-centre in curves. Reported upstream:
+  [vision_pilot#432](https://github.com/autowarefoundation/vision_pilot/issues/432).
+- **The Autoware profile** uses an empty scene with no other cars.
+- **If the SI stops publishing,** the actuator keeps the last command.
+- **CARLA needs an NVIDIA GPU.** `--cpu` only moves VisionPilot inference to
+  the CPU.
 
-## Next steps
+## Upstream work
 
-VisionPilot work is tracked in [`todo.md`](todo.md) (curve offset, junctions,
-upstream PRs). Rig-level ideas, not scheduled:
+| Repo | PR | What |
+| --- | --- | --- |
+| autoware-safety-island | [#66](https://github.com/autowarefoundation/autoware-safety-island/pull/66) | The SI supervisor used here |
+| vision_pilot | [#423](https://github.com/autowarefoundation/vision_pilot/pull/423) | `DrivingCommand` / `DrivingReference` messages |
+| vision_pilot | [#427](https://github.com/autowarefoundation/vision_pilot/pull/427) | Braking fixes |
+| vision_pilot | [#428](https://github.com/autowarefoundation/vision_pilot/pull/428) | Configurable lateral filter |
+| vision_pilot | [#429](https://github.com/autowarefoundation/vision_pilot/pull/429) | MJPEG viewer, HUD fix |
+| vision_pilot | [#430](https://github.com/autowarefoundation/vision_pilot/pull/430) | Docker build and log fixes |
 
-- a `CARLA_HOST` knob for a remote CARLA server (scenario and bridge use
-  `127.0.0.1` today);
-- a configurable town (the scenario hardcodes Town04) and more spawn points;
-- a smaller bridge camera image or a same-vendor transport to cut the
-  ~74 MB/s DDS load (finding 012);
-- ARM CPU inference measurements and INT8 on a VNNI-capable CPU.
-
-History: [`docs/vp-si-integration-plan.md`](docs/vp-si-integration-plan.md)
-(the staged plan this rig implemented) and the git log.
+Until these merge, the submodules are pinned to the branches below. Open work
+is in [`todo.md`](todo.md).
 
 ## Repository
 
 | Path | Contents |
 | --- | --- |
-| [`deploy/`](deploy/README.md) | Setup, build, Compose services, configs, rig nodes and measurement tools |
-| [`safety_island_msgs/`](safety_island_msgs/msg) | `ApprovedRequest` (the SI output the actuator consumes) |
-| [`docs/`](docs/) | Contract, fault evidence, VP findings, example clips |
-| [`upstream/vision_pilot`](https://github.com/oguzkaganozt/vision_pilot/tree/rig/vp-e2e-demo) | VisionPilot fork, pinned on `rig/vp-e2e-demo` |
+| [`deploy/`](deploy/README.md) | Setup, build, Compose services, configs, rig nodes and tools |
+| [`docs/`](docs/) | Stop-gate and fault evidence, VisionPilot findings, clips |
+| [`safety_island_msgs/`](safety_island_msgs/msg) | `ApprovedRequest`, the SI output the actuator reads |
+| [`upstream/vision_pilot`](https://github.com/oguzkaganozt/vision_pilot/tree/rig/vp-e2e-demo) | VisionPilot, pinned on `rig/vp-e2e-demo` |
 | [`upstream/autoware-safety-island`](https://github.com/autowarefoundation/autoware-safety-island/tree/feat/si-supervisor-v0-1) | Safety Island, pinned on `feat/si-supervisor-v0-1` |
-
-CARLA uses the `carlasim/carla:0.9.16` image and its Python API.
