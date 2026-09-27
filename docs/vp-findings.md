@@ -628,9 +628,11 @@ Four causes, each measured on these runs:
    `6305ea90`, 2026-08-10, changed `delta_v = -cipo_v` to `delta_v = cipo_v`).
    Both planner headers and `test_planning.cpp` define `cipo_v` as the lead's
    speed, the app passes the fused velocity *relative* to ego, and the IDM
-   treats it as closing speed. At 9.4 m/s and 20 m: stopped lead **+0.52**
-   m/s², lead pulling away at 14 m/s **−6.84** m/s² (fixed: −3.62 / +1.36;
-   host check against `longitudinal_planning.cpp`). Steady following
+   treats it as closing speed. At 9.4 m/s and 20 m, with the relative velocity
+   the app passes: stopped lead **+1.48** m/s² (accelerates toward it), lead
+   pulling away at 14 m/s **−1.10** m/s²; fed the lead's speed as the headers
+   document, +0.52 / −6.84. Fixed: −3.62 / +1.36 (host check against
+   `longitudinal_planning.cpp`). Steady following
    (Δv ≈ 0) is unaffected, which is why 003's slow lead is followed.
 2. **Fusion — a low-flag AutoDrive distance outweighs AS+H at range.** With an
    AutoSpeed box present, AD's distance joins the particle filter at any flag.

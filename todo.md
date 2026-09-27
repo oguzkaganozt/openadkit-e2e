@@ -66,30 +66,25 @@ draft PRs for the code-level branches below. Near-field heuristics
 `carla-rig.json` (stopped lead), `carla-rig-stop-go.json`,
 `carla-rig-slow-lead.json`.
 
-### 4. P4 — upstream PRs (ready, need the owner's go)
-Branches are on the fork (`oguzkaganozt/autoware_vision_pilot`). Each applies
-cleanly on `autowarefoundation/vision_pilot` `main` (`d4d9be13`) on its own:
+### 4. Upstream PRs (opened as drafts 2026-09-27)
+SI: autowarefoundation/autoware-safety-island#66 (`feat/si-supervisor-v0-1`,
+CI green). VisionPilot, from the public fork `oguzkaganozt/vision_pilot`, each
+on upstream `main` `d4d9be13` and built with the Dockerfile builder stage:
 
-| Branch / commit | PR title |
-|---|---|
-| `9194651b` | fix(docker): initialize ENABLE_RADAR so default builds do not fail |
-| `2ecc4146` | feat(viz): add an MJPEG endpoint that mirrors the rendered frame |
-| `491743a9` | fix(viz): preserve scene exposure when drawing speed |
-| `fix/vp-lat-fusion-config` `3391b28e` | feat(config): expose lateral fusion noise as fusion.lat.* keys |
-| `fix/vp-stdout-line-buffer` `4157a2d9` | fix(log): line-buffer stdout so log timestamps match events |
-| `fix/vp-ad-only-cipo` `c4e17bf0` | fix(fusion): AD-only CIPO may continue an AS-started track, not start one |
-| `fix/vp-idm-closing-speed` `b935d7dd` | fix(planning): IDM closing speed is ego speed minus lead speed (015) |
-| `fix/vp-ad-dist-needs-flag` `89aa01d6` | fix(fusion): AD distance needs AD's own CIPO flag when AS has the box (015, discuss) |
-| `fix/vp-long-fusion-config` `924cc8cc` | feat(fusion): expose longitudinal filter tuning as fusion.long.* keys (015, discuss) |
+| PR | Branch | Content |
+|---|---|---|
+| #423 (updated) | `feat/ros2-native-motion-intent` | typed `DrivingCommand`/`DrivingReference` + steering sign |
+| #427 | `pr/longitudinal-fixes` | IDM closing-speed sign (015) + AD-only CIPO (011) |
+| #428 | `pr/fusion-lat-config` | `fusion.lat.*` keys (013) |
+| #429 | `pr/viz-mjpeg-hud` | MJPEG viewer + speed-HUD exposure |
+| #430 | `pr/build-and-log` | ENABLE_RADAR default + line-buffered stdout (012) |
 
-The DrivingCommand/DrivingReference interface (`4c21cdf4`, `fe249310`,
-`3d4976e4`) and the steering-sign fix (`191551e0`, depends on it) belong in
-the existing draft PR #423 (`feat/ros2-native-motion-intent`). The SI branch
-`feat/si-supervisor-v0-1` (`9909cec`: re-enable fix, native VP ingress) → `main` is a separate
-decision. Open as drafts, e.g.
-`gh pr create -R autowarefoundation/vision_pilot --draft --head oguzkaganozt:fix/vp-ad-only-cipo --base main`
-(single-commit branches; cherry-pick the three `rig/vp-e2e-demo` commits onto
-new branches first). If anything merges, re-pin and re-validate.
+Not PRs: `fix/vp-ad-dist-needs-flag` and `fix/vp-long-fusion-config` (015) go
+into the stopped-lead issue as measured proposals. Issues for 015 and 016 are
+still to be written. Upstream CI: DCO and spell-check fail on merged PRs too;
+`semantic-pull-request` needs a lowercase subject, and PRs opened together
+cancel each other's run (shared concurrency group); a body edit re-triggers it.
+If anything merges, re-pin and re-validate.
 
 ## Do not
 
