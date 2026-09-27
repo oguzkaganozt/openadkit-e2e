@@ -1,0 +1,122 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1090 570" width="1090" height="570" role="img" aria-label="openadkit-e2e closed loop">
+<title>openadkit-e2e closed loop</title>
+<style>
+svg{--bg:#f5f7f8;--ink:#1a2128;--muted:#5a6570;--line:#7d8993;--sim-fill:#eef1ea;--sim-stroke:#66764f;--d1-fill:#e5eff5;--d1-stroke:#35718f;--d2-fill:#fbeee0;--d2-stroke:#b0621a;--box:#ffffff;--loop:#b0621a;--new:#2f7d4f}
+@media (prefers-color-scheme: dark){svg{--bg:#101417;--ink:#e4e9ec;--muted:#9aa5ae;--line:#7f8b94;--sim-fill:#181d15;--sim-stroke:#9fb286;--d1-fill:#122530;--d1-stroke:#6fb1d1;--d2-fill:#2a1e12;--d2-stroke:#e59a55;--box:#171c20;--loop:#e59a55;--new:#6cc792}}
+.bg{fill:var(--bg)}
+text{font-family:"IBM Plex Sans","Helvetica Neue",Arial,sans-serif;fill:var(--ink)}
+.t{font-size:15px;font-weight:600}
+.s{font-size:12px;fill:var(--muted)}
+.m{font-family:"IBM Plex Mono",Menlo,Consolas,monospace;font-size:11.5px;fill:var(--muted)}
+.n{fill:var(--new)}
+.zl{font-family:"IBM Plex Mono",Menlo,Consolas,monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+.zone-sim{fill:var(--sim-fill);stroke:var(--sim-stroke)}
+.zone-d1{fill:var(--d1-fill);stroke:var(--d1-stroke)}
+.zone-d2{fill:var(--d2-fill);stroke:var(--d2-stroke)}
+.zl.sim{fill:var(--sim-stroke)} .zl.d1{fill:var(--d1-stroke)} .zl.d2{fill:var(--d2-stroke)}
+.box{fill:var(--box);stroke:var(--line);stroke-width:1}
+.box.si{stroke:var(--d2-stroke);stroke-width:1.6}
+.box.act{stroke:var(--d2-stroke)}
+.bridge{fill:var(--box);stroke:var(--line);stroke-dasharray:4 3}
+.flow{fill:none;stroke:var(--line);stroke-width:1.4}
+.flow.loop{stroke:var(--loop);stroke-width:2}
+.flow.opt{stroke-dasharray:5 4}
+.ah{fill:var(--line)} .ah.loop{fill:var(--loop)}
+</style>
+<rect class="bg" width="1090" height="570"/>
+      <defs>
+        <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0,0 L10,5 L0,10 z"/></marker>
+        <marker id="al" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah loop" d="M0,0 L10,5 L0,10 z"/></marker>
+      </defs>
+
+      <!-- zones -->
+      <rect class="zone-sim" x="20" y="30" width="240" height="440" rx="10"/>
+      <text class="zl sim" x="36" y="52">Simulator</text>
+      <rect class="zone-d1" x="286" y="30" width="344" height="440" rx="10"/>
+      <text class="zl d1" x="302" y="52">DDS domain 1 · planning</text>
+      <rect class="zone-d2" x="756" y="30" width="314" height="440" rx="10"/>
+      <text class="zl d2" x="772" y="52">DDS domain 2 · supervision</text>
+
+      <!-- simulator column -->
+      <rect class="box" x="40" y="70" width="200" height="70" rx="7"/>
+      <text class="t" x="56" y="98">scenario</text>
+      <text class="s" x="56" y="120">ego, lead, NPCs · ticks the world</text>
+
+      <rect class="box" x="40" y="180" width="200" height="90" rx="7"/>
+      <text class="t" x="56" y="210">CARLA 0.9.16</text>
+      <text class="s" x="56" y="232">Town04 · synchronous 20 Hz</text>
+      <text class="m" x="56" y="254">Lincoln MKZ ego</text>
+
+      <rect class="box" x="40" y="310" width="200" height="100" rx="7"/>
+      <text class="t" x="56" y="338">carla-bridge</text>
+      <text class="s" x="56" y="360">telemetry only, never actuates</text>
+      <text class="m" x="56" y="382">camera 1920×1280 @10 Hz</text>
+      <text class="m" x="56" y="399">odometry · accel · steering</text>
+
+      <!-- domain 1 -->
+      <rect class="box" x="306" y="70" width="256" height="180" rx="7"/>
+      <text class="t" x="322" y="98">VisionPilot</text>
+      <text class="s" x="322" y="120">ROS 2 Jazzy · FastDDS</text>
+      <text class="m" x="322" y="146">AutoDrive · AutoSteer · AutoSpeed</text>
+      <text class="m" x="322" y="164">→ fusion → MPC (lateral) + IDM</text>
+      <text class="m" x="322" y="194">publishes both, knows no mode:</text>
+      <text class="m" x="322" y="212">lane polynomial + speed horizon</text>
+      <text class="m" x="322" y="230">steer · speed · accel command</text>
+
+      <rect class="box" x="306" y="340" width="256" height="80" rx="7"/>
+      <text class="t" x="322" y="368">Autoware planning</text>
+      <text class="s" x="322" y="390">autoware profile only</text>
+
+      <!-- domain bridge -->
+      <rect class="bridge" x="656" y="70" width="74" height="350" rx="7"/>
+      <text class="t" transform="translate(690 245) rotate(-90)" text-anchor="middle">domain-bridge</text>
+      <text class="m" transform="translate(712 245) rotate(-90)" text-anchor="middle">1 → 2 only · no control topic back</text>
+
+      <!-- domain 2 -->
+      <rect class="box si" x="776" y="70" width="274" height="220" rx="7"/>
+      <text class="t" x="792" y="98">Safety Island</text>
+      <text class="s" x="792" y="120">FreeRTOS POSIX · one binary</text>
+      <text class="m" x="792" y="146">VP reference → path, placed</text>
+      <text class="m" x="792" y="163">with the same-frame ego pose</text>
+      <text class="m" x="792" y="188">source watchdog ~1.0 s</text>
+      <text class="m" x="792" y="206">accel envelope ±6 m/s²</text>
+      <text class="m" x="792" y="224">fault → SI_STOP latch</text>
+      <text class="m" x="792" y="242">explicit re-enable to resume</text>
+      <text class="m" x="792" y="260">SI_CONTROL: own follower</text>
+      <text class="m" x="792" y="278">VP_CONTROL: VP command, checked</text>
+
+      <rect class="box act" x="776" y="320" width="274" height="100" rx="7"/>
+      <text class="t" x="792" y="346">carla-actuator</text>
+      <text class="s" x="792" y="366">sole CARLA control writer</text>
+      <text class="m" x="792" y="387">drive: Ackermann · stop: brake 0.4</text>
+      <text class="m" x="792" y="404">tire angle ÷ steering curve</text>
+
+      <!-- flows -->
+      <path class="flow" d="M140 140 V178" marker-end="url(#a)"/>
+      <text class="m" x="148" y="164">spawn · tick</text>
+      <path class="flow" d="M140 270 V308" marker-end="url(#a)"/>
+      <text class="m" x="148" y="294">RPC</text>
+
+      <path class="flow" d="M240 330 H266 V130 H304" marker-end="url(#a)"/>
+      <text class="m" x="282" y="206" transform="rotate(-90 282 206)" text-anchor="middle">camera, speed</text>
+
+      <path class="flow opt" d="M562 110 H654" marker-end="url(#a)"/>
+      <text class="m" x="568" y="102">DrivingRef</text>
+      <path class="flow opt" d="M562 210 H654" marker-end="url(#a)"/>
+      <text class="m" x="568" y="202">DrivingCmd</text>
+      <path class="flow opt" d="M562 380 H654" marker-end="url(#a)"/>
+      <text class="m" x="568" y="372">Trajectory</text>
+
+      <path class="flow" d="M240 395 H276 V446 H693 V422" marker-end="url(#a)"/>
+      <text class="m" x="300" y="460">odometry · acceleration · steering</text>
+
+      <path class="flow" d="M730 170 H774" marker-end="url(#a)"/>
+
+      <path class="flow" d="M913 290 V318" marker-end="url(#a)"/>
+      <text class="m" x="921" y="309">ApprovedRequest</text>
+
+      <path class="flow loop" d="M913 420 V520 H30 V225 H38" marker-end="url(#al)"/>
+      <text class="m" x="360" y="512" style="fill:var(--loop)">Ackermann (tire angle, speed, accel) · brake on stop</text>
+
+      <text class="m" x="302" y="546">dashed: the SI subscribes to one of these, chosen at startup</text>
+    </svg>

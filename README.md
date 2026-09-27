@@ -24,18 +24,7 @@ Findings: [`docs/vp-findings.md`](docs/vp-findings.md). Example clips:
 
 ## How it works
 
-```mermaid
-flowchart LR
-    CARLA["CARLA 0.9.16"] -->|RPC| Bridge["carla-bridge<br/>telemetry only"]
-    Scenario["scenario<br/>ego, NPCs, sim ticks"] --> CARLA
-    Bridge -->|camera| VP["VisionPilot<br/>ROS 2 Jazzy"]
-    VP -->|DrivingReference, DrivingCommand| DB["domain-bridge<br/>1 → 2 only"]
-    AW["Autoware planning<br/>(autoware profile)"] -->|Trajectory| DB
-    Bridge -->|odometry, accel, steering| DB
-    DB --> SI["Safety Island<br/>FreeRTOS POSIX"]
-    SI -->|ApprovedRequest| Act["carla-actuator<br/>sole CARLA control writer"]
-    Act -->|VehicleControl| CARLA
-```
+![openadkit-e2e closed loop](docs/closed-loop.svg)
 
 - **Domains:** CARLA telemetry, VisionPilot and Autoware use DDS
   domain 1; the SI and the actuator use domain 2. The domain bridge carries
