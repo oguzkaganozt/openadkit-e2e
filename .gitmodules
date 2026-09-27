@@ -1,6 +1,6 @@
 [submodule "upstream/vision_pilot"]
 	path = upstream/vision_pilot
-	url = https://github.com/oguzkaganozt/autoware_vision_pilot.git
+	url = https://github.com/oguzkaganozt/vision_pilot.git
 	branch = rig/vp-e2e-demo
 [submodule "upstream/autoware-safety-island"]
 	path = upstream/autoware-safety-island

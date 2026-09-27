@@ -119,7 +119,7 @@ History: [`docs/vp-si-integration-plan.md`](docs/vp-si-integration-plan.md)
 | [`deploy/`](deploy/README.md) | Setup, build, Compose services, configs, rig nodes and measurement tools |
 | [`safety_island_msgs/`](safety_island_msgs/msg) | `ApprovedRequest` (the SI output the actuator consumes) |
 | [`docs/`](docs/) | Contract, fault evidence, VP findings, example clips |
-| [`upstream/vision_pilot`](https://github.com/oguzkaganozt/autoware_vision_pilot/tree/rig/vp-e2e-demo) | VisionPilot fork, pinned on `rig/vp-e2e-demo` |
+| [`upstream/vision_pilot`](https://github.com/oguzkaganozt/vision_pilot/tree/rig/vp-e2e-demo) | VisionPilot fork, pinned on `rig/vp-e2e-demo` |
 | [`upstream/autoware-safety-island`](https://github.com/autowarefoundation/autoware-safety-island/tree/feat/si-supervisor-v0-1) | Safety Island, pinned on `feat/si-supervisor-v0-1` |
 
 CARLA uses the `carlasim/carla:0.9.16` image and its Python API.
