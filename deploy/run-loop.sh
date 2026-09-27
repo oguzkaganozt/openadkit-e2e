@@ -186,7 +186,7 @@ fi
 # Belt and braces: remove any deterministic-name container Compose does not
 # own (ad-hoc probe runs) that could still hold a CARLA client.
 for name in openadkit-e2e-carla openadkit-e2e-scenario openadkit-e2e-carla-bridge \
-             openadkit-e2e-adapter openadkit-e2e-si openadkit-e2e-visionpilot \
+             openadkit-e2e-si openadkit-e2e-visionpilot \
              openadkit-e2e-bridge openadkit-e2e-operation-mode \
              openadkit-e2e-autoware-planning openadkit-e2e-odom-to-tf \
              openadkit-e2e-empty-scene openadkit-e2e-carla-actuator; do

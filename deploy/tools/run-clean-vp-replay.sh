@@ -27,7 +27,7 @@ for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
       -e CYCLONEDDS_URI=file:///autoware/cyclonedds.xml \
       -v "$ROOT/deploy/tools:/opt/tools:ro" \
       -v "$ROOT/deploy/config/cyclonedds.xml:/autoware/cyclonedds.xml:ro" \
-      openadkit-e2e-adapter:latest -lc \
+      openadkit-e2e-ros-tools:latest -lc \
       'source /opt/ros/humble/setup.bash && source /opt/autoware/setup.bash && python3 /opt/tools/candidate_replay_probe.py' \
       >"$out/replay.log" 2>&1; then
       result=0

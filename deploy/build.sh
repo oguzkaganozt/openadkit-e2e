@@ -175,20 +175,20 @@ test -x "$SI/build/freertos-posix/actuation_freertos"
 echo "Pulling runtime images..."
 "${COMPOSE[@]}" pull carla
 
-echo "Building the adapter image ($ADAPTER_IMAGE: Autoware runtime + visionpilot_msgs + safety_island_msgs)..."
+echo "Building the ROS tools image ($ROS_TOOLS_IMAGE: Autoware runtime + visionpilot_msgs + safety_island_msgs)..."
 docker build \
-  -f "$DEPLOY/images/adapter.Dockerfile" \
-  -t "$ADAPTER_IMAGE" \
+  -f "$DEPLOY/images/ros-tools.Dockerfile" \
+  -t "$ROS_TOOLS_IMAGE" \
   --build-arg "AUTOWARE_IMAGE=$AUTOWARE_IMAGE" \
   --build-context "vpmsgs=$VP/modules/middleware_interfaces/ros2_interface/visionpilot_msgs" \
   --build-context "simsgs=$ROOT/safety_island_msgs" \
   "$DEPLOY/images"
 
-echo "Building the domain-bridge image ($BRIDGE_IMAGE: adapter image + domain_bridge)..."
+echo "Building the domain-bridge image ($BRIDGE_IMAGE: ROS tools image + domain_bridge)..."
 docker build \
   -f "$DEPLOY/images/domain-bridge.Dockerfile" \
   -t "$BRIDGE_IMAGE" \
-  --build-arg "ADAPTER_IMAGE=$ADAPTER_IMAGE" \
+  --build-arg "ROS_TOOLS_IMAGE=$ROS_TOOLS_IMAGE" \
   --build-arg "ROS_DISTRO=humble" \
   "$DEPLOY/images"
 "${COMPOSE[@]}" config -q

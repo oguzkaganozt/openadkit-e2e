@@ -1,9 +1,9 @@
-# Autoware runtime + VP/SI message packages for the E2E adapter (and the
-# SI probes / future CARLA actuator).
+# ROS tools image: Autoware runtime + VP/SI message packages for the CARLA
+# actuator, the domain bridge and the rig's probes.
 #
-# The adapter consumes /vehicle/driving_reference (visionpilot_msgs) and
-# later the actuator reads /control/safety_island/approved_request
-# (safety_island_msgs); the Autoware universe image ships neither and its
+# The actuator reads /control/safety_island/approved_request
+# (safety_island_msgs) and the probes read VP's visionpilot_msgs; the
+# Autoware universe image ships neither and its
 # pruned toolchain (no cc1/Scrt1.o/crti.o, no fastcdr headers) cannot build
 # them. safety_island_msgs additionally depends on autoware_control_msgs,
 # which only exists in the Autoware install tree, so that tree is brought
@@ -12,8 +12,8 @@
 #
 # Build with the message package directories as named contexts
 # (deploy/build.sh does this):
-#   docker build -f deploy/images/adapter.Dockerfile \
-#     -t "${ADAPTER_IMAGE}" \
+#   docker build -f deploy/images/ros-tools.Dockerfile \
+#     -t "${ROS_TOOLS_IMAGE}" \
 #     --build-arg "AUTOWARE_IMAGE=${AUTOWARE_IMAGE}" \
 #     --build-context "vpmsgs=upstream/vision_pilot/VisionPilot/modules/middleware_interfaces/ros2_interface/visionpilot_msgs" \
 #     --build-context "simsgs=safety_island_msgs" deploy/images

@@ -22,7 +22,7 @@ probe() {
     -e CYCLONEDDS_URI=file:///autoware/cyclonedds.xml \
     -v "$ROOT/deploy/tools:/opt/tools:ro" \
     -v "$ROOT/deploy/config/cyclonedds.xml:/autoware/cyclonedds.xml:ro" \
-    openadkit-e2e-adapter:latest -lc \
+    openadkit-e2e-ros-tools:latest -lc \
     "source /opt/ros/humble/setup.bash && source /opt/autoware/setup.bash && python3 /opt/tools/vp_restart_probe.py $*"
 }
 

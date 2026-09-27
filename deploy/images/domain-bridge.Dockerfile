@@ -1,18 +1,18 @@
 # Domain bridge image for the E2E rig: the ROS 2 domain_bridge needs the
 # workspace message types installed in its own environment (it resolves
 # topic types by import), and this rig bridges visionpilot_msgs
-# (driving_command 1->2) besides the Autoware types. The adapter image
+# (driving_command 1->2) besides the Autoware types. The ROS tools image
 # already carries visionpilot_msgs + safety_island_msgs on top of the
 # Autoware runtime, so base on it and only add the bridge package (same
 # ROS expired-key fix the Safety Island demo Dockerfile uses).
 #
-# Build (deploy/build.sh does this, after the adapter image exists):
+# Build (deploy/build.sh does this, after the ROS tools image exists):
 #   docker build -f deploy/images/domain-bridge.Dockerfile \
 #     -t "${BRIDGE_IMAGE}" \
-#     --build-arg "ADAPTER_IMAGE=${ADAPTER_IMAGE}" deploy/images
-ARG ADAPTER_IMAGE=openadkit-e2e-adapter:latest
+#     --build-arg "ROS_TOOLS_IMAGE=${ROS_TOOLS_IMAGE}" deploy/images
+ARG ROS_TOOLS_IMAGE=openadkit-e2e-ros-tools:latest
 
-FROM ${ADAPTER_IMAGE}
+FROM ${ROS_TOOLS_IMAGE}
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ARG ROS_DISTRO=humble
 USER root

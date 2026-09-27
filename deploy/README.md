@@ -27,7 +27,7 @@ The build initializes the pinned submodules, downloads and verifies the CARLA
 0.9.16 wheel into `/tmp/` and `/tmp/carla-venv`, builds `visionpilot:gpu-ros2`
 from the fork pin, builds the SI binary
 (`upstream/autoware-safety-island/build/freertos-posix/actuation_freertos`),
-the ROS tools image (`openadkit-e2e-adapter`, historical name: the Autoware
+the ROS tools image (`openadkit-e2e-ros-tools`: the Autoware
 runtime plus `visionpilot_msgs` and `safety_island_msgs`; base of the actuator,
 probes and domain bridge) and the domain-bridge image, and pulls CARLA. Add `--run` to start a loop afterwards.
 
@@ -76,7 +76,7 @@ docker run --rm --network host --ipc host --entrypoint bash \
   -e ROS_DOMAIN_ID=2 -e RMW_IMPLEMENTATION=rmw_cyclonedds_cpp \
   -e CYCLONEDDS_URI=file:///autoware/cyclonedds.xml \
   -v "$PWD/deploy/config/cyclonedds.xml:/autoware/cyclonedds.xml:ro" \
-  openadkit-e2e-adapter:latest -lc 'source /opt/ros/humble/setup.bash &&
+  openadkit-e2e-ros-tools:latest -lc 'source /opt/ros/humble/setup.bash &&
   ros2 topic pub --once /control/safety_island/reenable std_msgs/msg/Bool "{data: true}"'
 ```
 

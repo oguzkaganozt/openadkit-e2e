@@ -85,7 +85,7 @@ services:
   # watchdog brake, speed target or latch of its own; SI owns every stop
   # decision. The telemetry bridge above never calls apply_control().
   carla-actuator:
-    image: ${ADAPTER_IMAGE:-openadkit-e2e-adapter:latest}
+    image: ${ROS_TOOLS_IMAGE:-openadkit-e2e-ros-tools:latest}
     container_name: openadkit-e2e-carla-actuator
     <<: *run-logging
     network_mode: host

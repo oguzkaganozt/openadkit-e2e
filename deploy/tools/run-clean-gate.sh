@@ -61,7 +61,7 @@ probe_candidates() {
     -e RUN_SEC="${ISOLATION_SEC:-10}" \
     -v "$ROOT/deploy/tools:/opt/tools:ro" \
     -v "$ROOT/deploy/config/cyclonedds.xml:/autoware/cyclonedds.xml:ro" \
-    openadkit-e2e-adapter:latest -lc \
+    openadkit-e2e-ros-tools:latest -lc \
     'source /opt/ros/humble/setup.bash && source /opt/autoware/setup.bash && python3 /opt/tools/candidate_isolation_probe.py'
 }
 
@@ -74,7 +74,7 @@ probe_vp_passthrough() {
       -e CYCLONEDDS_URI=file:///autoware/cyclonedds.xml \
       -v "$ROOT/deploy/tools:/opt/tools:ro" -v "$out:/evidence:rw" \
       -v "$ROOT/deploy/config/cyclonedds.xml:/autoware/cyclonedds.xml:ro" \
-      openadkit-e2e-adapter:latest -lc \
+      openadkit-e2e-ros-tools:latest -lc \
       "source /opt/ros/humble/setup.bash && source /opt/autoware/setup.bash && python3 /opt/tools/vp_passthrough_check.py capture-$side --out /evidence/$side.jsonl --sec 12"
   }
   capture vp 1 >"$out/command-capture.log" 2>&1 &
