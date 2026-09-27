@@ -2,8 +2,9 @@
 """Single CARLA control writer for the E2E rig (E2E #2).
 
 The Safety Island's ApprovedRequest is the only actuation input of this
-process, and this process is the only writer of `vehicle.apply_control()` in
-the rig:
+process, and this process is the only writer of CARLA vehicle control
+(`apply_ackermann_control()` for driving, `apply_control()` for stops) in the
+rig:
 
   NORMAL  -> actuate the approved payload of this request
   SI_STOP -> actuate the explicit stop payload SI computed (target speed 0,
@@ -44,67 +45,28 @@ DECISION_NORMAL = 0
 DECISION_STOP = 1
 DECISION_HOLD = 2
 
-# Pedal mapping of an approved (velocity, acceleration) request; the same
-# deterministic translation the bridge used, kept identical so the actuator
-# swap changes authority, not vehicle behavior.
+# An approved (velocity, acceleration, tire angle) request is handed to
+# CARLA's own Ackermann speed/acceleration controller, which knows this car's
+# engine and gearbox. A hand-made pedal map fought the automatic transmission
+# (0.40 throttle holds 4.45 m/s, 0.49 runs away past 16 m/s) and held a
+# 3.7-4.3 m/s cycle at a 4 m/s target; the Ackermann controller holds
+# 3.98-4.00 m/s. The acceleration is the magnitude used to reach the speed,
+# bounded by the SI's +/-6 m/s^2 envelope.
+ACKERMANN_ACCEL_MIN = 0.5
+ACKERMANN_ACCEL_MAX = 6.0
+# Stops (SI_STOP, or any approved request for zero speed with no positive
+# acceleration) are a fixed brake on the pedal interface: the stop gate is
+# defined as the first CARLA frame with the brake applied.
 STOP_SPEED_MPS = 0.05
-# Throttle that holds a steady speed on the rig car (vehicle.lincoln.mkz_2020,
-# Town04 spawn 184), measured open loop in CARLA 0.9.16 on 2026-09-27. The
-# automatic transmission makes it strongly nonlinear: 0.40 holds 4.45 m/s,
-# 0.44-0.48 all settle at 5.1-5.7 m/s and 0.49 runs away past 16 m/s, so
-# 6-15 m/s cannot be held open loop and relies on the feedback term. The
-# former linear feedforward (0.12 per m/s) asked 0.48 at 4 m/s, which drives
-# this car towards 5.7 m/s, and kept it in a 3.7-4.3 m/s limit cycle.
-HOLD_THROTTLE = (
-    (0.0, 0.25), (0.9, 0.30), (1.6, 0.35), (4.45, 0.40), (5.1, 0.42),
-    (5.7, 0.48), (16.0, 0.49), (23.6, 0.60),
-)
-# Above this speed no constant throttle holds the car (the next gear runs
-# away), so speed is held against light braking instead.
-HOLD_OPEN_LOOP_MAX_MPS = 5.7
-SPEED_P_GAIN = 0.05
-ACCEL_THROTTLE_GAIN = 0.08
-BRAKE_DECEL_GAIN = 0.25
-MAX_THROTTLE = 0.5
+STOP_BRAKE = 0.4
 # CARLA scales the wheel angle by the vehicle's speed-dependent
-# steering_curve (e.g. 0.87 at 9 m/s on the rig car), so steer = tire/max_steer
-# under-delivers the approved tire angle at speed (finding 013). Divide by the
-# curve to realise the contract's tire angle. ACTUATOR_STEER_CURVE_COMP=0 keeps
-# the old mapping for A/B runs.
+# steering_curve (e.g. 0.87 at 9 m/s on the rig car), in the pedal and the
+# Ackermann interface alike, so the approved tire angle is under-delivered at
+# speed (finding 013). Divide by the curve to realise the contract's tire
+# angle. ACTUATOR_STEER_CURVE_COMP=0 keeps the uncompensated angle for A/B runs.
 STEER_CURVE_COMP = os.environ.get("ACTUATOR_STEER_CURVE_COMP", "1") != "0"
 APPLIED_LOG_INTERVAL = 100
 SILENCE_LOG_SEC = 5.0
-
-
-def hold_throttle(speed_mps: float) -> float:
-    points = HOLD_THROTTLE
-    if speed_mps <= points[0][0]:
-        return points[0][1]
-    for (v0, t0), (v1, t1) in zip(points, points[1:]):
-        if speed_mps <= v1:
-            return t0 + (t1 - t0) * (speed_mps - v0) / (v1 - v0)
-    return points[-1][1]
-
-
-def carla_longitudinal(cmd_v: float, cmd_a: float, actual_v: float) -> tuple[float, float]:
-    if cmd_v <= STOP_SPEED_MPS and cmd_a <= 0.0:
-        return 0.0, 0.4
-    speed_error = cmd_v - actual_v
-    # Brake on an explicit SI decel demand (<= -0.5 m/s^2) or a clear
-    # overspeed. Where a throttle can hold the speed, smaller errors are
-    # regulated on the throttle alone; above HOLD_OPEN_LOOP_MAX_MPS a slight
-    # overspeed with a negative demand is also braked, since no throttle holds
-    # the car there.
-    holdable = cmd_v <= HOLD_OPEN_LOOP_MAX_MPS
-    if (speed_error < -0.4 or cmd_a <= -0.5 or
-            (not holdable and cmd_a < 0.0 and speed_error < 0.0)):
-        return 0.0, min(1.0, max(-cmd_a * BRAKE_DECEL_GAIN, -speed_error * 0.5))
-    throttle = (
-        hold_throttle(max(cmd_v, 0.0))
-        + SPEED_P_GAIN * speed_error
-        + ACCEL_THROTTLE_GAIN * max(cmd_a, 0.0)
-    )
-    return max(0.0, min(MAX_THROTTLE, throttle)), 0.0
 
 
 def steering_curve_factor(curve: list[tuple[float, float]], speed_mps: float) -> float:
@@ -332,18 +294,26 @@ class CarlaActuator(Node):
                     time.sleep(0.01)
                     continue
 
-                ctrl = carla.VehicleControl()
                 steer_gain = steering_curve_factor(self._steer_curve, actual_v)
-                ctrl.steer = max(
-                    -1.0,
-                    min(1.0, -payload["tire"] / ((self._max_steer or 1.0) * steer_gain)),
-                )
-                ctrl.throttle, ctrl.brake = carla_longitudinal(
-                    payload["velocity"], payload["acceleration"], actual_v
-                )
-                ctrl.hand_brake = False
-                ctrl.manual_gear_shift = False
-                vehicle.apply_control(ctrl)
+                tire = payload["tire"] / steer_gain  # CARLA angle that realises the approved one
+                stopping = (payload["velocity"] <= STOP_SPEED_MPS and
+                            payload["acceleration"] <= 0.0)
+                if stopping:
+                    ctrl = carla.VehicleControl()
+                    ctrl.steer = max(-1.0, min(1.0, -tire / (self._max_steer or 1.0)))
+                    ctrl.throttle, ctrl.brake = 0.0, STOP_BRAKE
+                    ctrl.hand_brake = False
+                    ctrl.manual_gear_shift = False
+                    vehicle.apply_control(ctrl)
+                else:
+                    vehicle.apply_ackermann_control(carla.VehicleAckermannControl(
+                        steer=-tire,
+                        speed=max(0.0, payload["velocity"]),
+                        acceleration=min(ACKERMANN_ACCEL_MAX,
+                                         max(ACKERMANN_ACCEL_MIN, abs(payload["acceleration"]))),
+                    ))
+                    # For the logs: the pedals CARLA's controller applied last tick.
+                    ctrl = vehicle.get_control()
                 self._applied += 1
                 if self._applied == 1 or self._applied % APPLIED_LOG_INTERVAL == 0:
                     self.get_logger().info(

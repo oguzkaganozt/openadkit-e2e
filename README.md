@@ -33,7 +33,7 @@ flowchart LR
     AW["Autoware planning<br/>(autoware profile)"] -->|Trajectory| DB
     Bridge -->|odometry, accel, steering| DB
     DB --> SI["Safety Island<br/>FreeRTOS POSIX"]
-    SI -->|ApprovedRequest| Act["carla-actuator<br/>sole apply_control()"]
+    SI -->|ApprovedRequest| Act["carla-actuator<br/>sole CARLA control writer"]
     Act -->|VehicleControl| CARLA
 ```
 
@@ -51,9 +51,10 @@ flowchart LR
   clearing it needs an explicit `/control/safety_island/reenable` (`std_msgs/Bool`,
   domain 2) while every source is fresh. An unusable VP reference is ignored,
   never turned into a stop.
-- **Actuation:** `carla-actuator` is the only caller of `apply_control()`. It
-  applies the SI's decision each loop and realises the approved tire angle
-  through the car's speed-dependent steering curve.
+- **Actuation:** `carla-actuator` is the only CARLA control writer. It hands
+  each approved speed, acceleration and tire angle to CARLA's Ackermann
+  controller (stops are a fixed brake) and realises the tire angle through the
+  car's speed-dependent steering curve.
 
 | `RIG_MODE` | `SI_MODE` | Who plans | Who follows |
 | --- | --- | --- | --- |

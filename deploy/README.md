@@ -143,7 +143,7 @@ VISIONPILOT_CONF=vision_pilot.cpu.conf CARLA_RUNTIME=nvidia ./deploy/run-loop.sh
 | `carla` | all | CARLA 0.9.16 server |
 | `scenario` | all | Owns the world: synchronous ticks, ego/NPC/lead actors, 1 Hz ground-truth pose, gap and collision log |
 | `carla-bridge` | all | Telemetry only (domain 1): camera, odometry, acceleration, steering report, speed, `/clock`, preview on :8090. Never actuates |
-| `carla-actuator` | all | Domain 2: sole `apply_control()` caller, maps each SI `ApprovedRequest` (NORMAL / SI_STOP / HOLD) to CARLA control |
+| `carla-actuator` | all | Domain 2: sole CARLA control writer; each SI `ApprovedRequest` (NORMAL / SI_STOP / HOLD) goes to CARLA's Ackermann controller, stops to a fixed 0.4 brake |
 | `domain-bridge` | all | Domain 1 → 2 for the topics in `bridge-config.yaml` only |
 | `operation-mode` | all | `AUTONOMOUS` operation-mode stub for the SI |
 | `si` | all | The SI binary; `SI_SUPERVISION_MODE` / `SI_TRAJECTORY_SOURCE` from `SI_MODE` / `RIG_MODE`, read once, fail closed |

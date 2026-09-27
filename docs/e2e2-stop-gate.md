@@ -8,8 +8,9 @@ the same world); containers, CARLA server and scenario were recreated by
 
 ## Architecture under test
 
-- `deploy/nodes/carla_actuator.py` is the only process that calls
-  `vehicle.apply_control()`. It subscribes to the SI's
+- `deploy/nodes/carla_actuator.py` is the only process that writes CARLA
+  vehicle control (Ackermann control for driving since 2026-09-27,
+  `apply_control()` with a fixed brake for stops). It subscribes to the SI's
   `/control/safety_island/approved_request` **directly on domain 2** and maps
   each decision: NORMAL actuates the approved payload, SI_STOP actuates SI's
   explicit stop payload, HOLD keeps the previous payload, unknown is HOLD.
