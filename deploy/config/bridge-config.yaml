@@ -20,6 +20,15 @@ topics:
     type: autoware_adapi_v1_msgs/msg/OperationModeState
     from_domain: 1
     to_domain: 2
+    # The SI's operation-mode reader requests TRANSIENT_LOCAL by default so a
+    # late-joining SI still receives the on-change state. Retain the last
+    # value on both sides: a VOLATILE bridge writer would not match a
+    # TRANSIENT_LOCAL reader at all.
+    qos:
+      reliability: reliable
+      durability: transient_local
+      history: keep_last
+      depth: 1
   localization/kinematic_state:
     type: nav_msgs/msg/Odometry
     from_domain: 1
