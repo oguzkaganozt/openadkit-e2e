@@ -257,6 +257,11 @@ services:
       # Startup-only selection. Missing values cause SI to fail closed.
       - SI_SUPERVISION_MODE=${SI_MODE:-}
       - SI_TRAJECTORY_SOURCE=${RIG_MODE:-}
+      # Legacy DDS control_cmd policy (always | stop_only), build default
+      # always. stop_only keeps the legacy topic to SI_STOP so a consumer
+      # that lets a fresh SI command win over its own driver hears SI only
+      # when it overrides.
+      - SI_LEGACY_CONTROL_CMD=${SI_LEGACY_CONTROL_CMD:-always}
     volumes:
       - ../upstream/autoware-safety-island/build/freertos-posix/actuation_freertos:/opt/si/actuation_freertos:ro
     entrypoint: ["/bin/bash", "-lc"]
